@@ -18,7 +18,7 @@ DATA="$IMPULSE_HOME/data"
 WAND="$IMPULSE_HOME/wand"
 LOG="$IMPULSE_HOME/impulse-proton.log"
 REPO="tweak-for-me/impulse"
-# The WebView2 Fixed Version runtime tested under Wine (newer ones are reported never to finish loading a page there).
+# The WebView2 Fixed Version runtime that works under Wine 11 and GE-Proton 10 (151 works under GE-Proton 10 only).
 # The NuGet package repacks Microsoft's signed runtime; the hash pins the one tested.
 WEBVIEW2_VERSION="135.0.3179.98"
 WEBVIEW2_SHA256="a6647e22379156781d07894a59382e62bfb1b1413edbdb335ecbd811a8c72245"

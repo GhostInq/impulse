@@ -9,6 +9,7 @@ Native Rust + GPUI client for the user's own Wand (WeMod) account and install. W
 - `scripts\ui.ps1 -Steps 'click:1016,25;wait:800;shot:out.png'` - starts the debug exe, drives it with posted window messages (`wait`, `move`, `click`, `rclick`, `wheel`, `text`, `key`, `shot`, `mem`, `threads`; client pixels) and captures it with `PrintWindow`, then kills it. No real cursor, focus or screen capture; refuses to run while Impulse is open. Build first with `cargo build`.
 - `scripts\panel.ps1` - builds the remote panel (`web/panel`, pnpm) into `web/panel/dist`, which the next cargo build embeds; `-Dev` runs its dev server (`/?demo`).
 - `scripts\release-notes.ps1 -Tag v0.2.0` - checks a release tag against the workspace version (`v1.2.3`, a pre-release `v1.2.3-pre`) and prints its `CHANGELOG.md` section; `.github/workflows/release.yml` uses it on a tag push.
+- `linux/impulse-proton` - Impulse beside a Steam game under Proton (Steam launch options); `linux/README.md` is its guide.
 - `scripts\smoke.ps1 <label>` - screenshots of the main states into `target\smoke\<label>\`, to compare before and after a change. Set `IMPULSE_LOCALE=pseudo` first for the pseudo-locale (debug builds).
 
 ## Invariants
@@ -20,7 +21,7 @@ Native Rust + GPUI client for the user's own Wand (WeMod) account and install. W
 
 ## Crates
 
-- `app` - the composition root: the elevated copy's entry (`agent::serve_elevated`), one instance, the journal, the migration, the registry, the window, the remote panel's server (feature `remote`, on by default).
+- `app` - the composition root: the elevated copy's entry (`agent::serve_elevated`), the game Proton asked for (`--game`: started first, Impulse quits with it), one instance, the journal and its folder (`IMPULSE_DATA_DIR` overrides it), the migration, the registry, the window, the remote panel's server (feature `remote`, on by default).
 - `shell` - the GPUI UI.
 - `client` - the app's logic without GPUI: library, trainer sheet, runs, hotkey choices, map state and the files that keep them.
 - `wand` - everything WeMod/Wand; its one public item is the `Wand` source.

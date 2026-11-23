@@ -33,7 +33,7 @@ Nothing of Wand's app runs during play: Impulse needs Wand's files (its trainer 
    ./impulse-proton setup
    ```
 
-   It downloads the latest `Impulse.exe`, checked against the digest of its release, and the WebView2 Fixed Version runtime 135.0.3179.98, checked against a pinned SHA-256. Newer runtimes are reported never to finish loading a page under Wine 10. Use `--exe path/to/Impulse.exe` for a build of your own, or `--tag vX.Y.Z` for another release. Run `setup` again to update.
+   It downloads the latest `Impulse.exe`, checked against the digest of its release, and the WebView2 Fixed Version runtime 135.0.3179.98, checked against a pinned SHA-256. It is pinned because newer runtimes depend on the Wine build: 151 works under GE-Proton 10 but never loads its page under Wine 11, while 135 works under both. Use `--exe path/to/Impulse.exe` for a build of your own, or `--tag vX.Y.Z` for another release. Run `setup` again to update.
 
 3. Install Wand in its own prefix and sign in. Download the Wand installer, then:
 
