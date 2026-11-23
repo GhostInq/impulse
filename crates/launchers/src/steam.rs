@@ -89,3 +89,21 @@ fn manifest(apps: &Path, file: &Path) -> Option<App> {
         location: apps.join("common").join(state.str("installdir")?),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Hand-run under Wine as Proton runs games: `STEAM_COMPAT_CLIENT_INSTALL_PATH` names a Linux Steam folder
+    /// (Unix path) whose libraries hold `IMPULSE_E2E_STEAM_APP`, a Steam app id installed there.
+    #[test]
+    #[ignore = "needs Wine, STEAM_COMPAT_CLIENT_INSTALL_PATH and IMPULSE_E2E_STEAM_APP"]
+    fn steams_linux_side_lists_its_games_under_proton() {
+        let app = format!("steam:{}", env::var("IMPULSE_E2E_STEAM_APP").expect("IMPULSE_E2E_STEAM_APP"));
+        let root = wine::steam_root().expect("Steam's Linux folder in Windows form");
+        let found = apps();
+        let ids: Vec<&str> = found.iter().map(|found| found.store_id.as_str()).collect();
+        let game = found.iter().find(|found| found.store_id == app).unwrap_or_else(|| panic!("{app} not among {ids:?}"));
+        assert!(game.location.starts_with(&root) && game.location.is_dir(), "{:?} under {}", game.location, root.display());
+    }
+}

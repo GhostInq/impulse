@@ -6,10 +6,7 @@ use anyhow::{Result, bail};
 use windows_sys::Win32::{
     Foundation::HANDLE,
     Security::{
-        Cryptography::{
-            CERT_NAME_SIMPLE_DISPLAY_TYPE, CERT_TRUST_IS_NOT_SIGNATURE_VALID, CERT_TRUST_IS_PARTIAL_CHAIN, CERT_TRUST_IS_UNTRUSTED_ROOT,
-            CertGetNameStringW,
-        },
+        Cryptography::{CERT_NAME_SIMPLE_DISPLAY_TYPE, CertGetNameStringW},
         WinTrust::{
             WINTRUST_ACTION_GENERIC_VERIFY_V2, WINTRUST_DATA, WINTRUST_DATA_0, WINTRUST_FILE_INFO, WTD_CACHE_ONLY_URL_RETRIEVAL,
             WTD_CHOICE_FILE, WTD_REVOKE_NONE, WTD_STATEACTION_CLOSE, WTD_STATEACTION_VERIFY, WTD_UI_NONE, WTHelperGetProvSignerFromChain,
@@ -18,12 +15,9 @@ use windows_sys::Win32::{
     },
 };
 
-/// A chain with any of these ends nowhere trusted. Windows' policy already refuses them; Wine's `WinVerifyTrust` passes a
-/// self-signed signer, though its chain says so.
-const UNTRUSTED: u32 = CERT_TRUST_IS_UNTRUSTED_ROOT | CERT_TRUST_IS_PARTIAL_CHAIN | CERT_TRUST_IS_NOT_SIGNATURE_VALID;
-
-/// Fails unless `path` has a valid embedded signature, chained to a trusted root, whose signer's display name is one of
-/// `publishers`. Revocation is not checked: it needs the network, and a trainer must start offline.
+/// Fails unless `path` has a valid embedded signature whose signer's display name is one of `publishers`, and whose
+/// signer certificate was issued by another. Revocation is not checked: it needs the network, and a trainer must start
+/// offline.
 pub fn check(path: &Path, publishers: &[&str]) -> Result<()> {
     let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
     let mut file =
@@ -48,9 +42,9 @@ pub fn check(path: &Path, publishers: &[&str]) -> Result<()> {
         (status, signer)
     };
     match (status, signer) {
-        (0, Some(Signer { chain, .. })) if chain & UNTRUSTED != 0 => {
-            bail!("{} is signed by a certificate no trusted root vouches for ({chain:#x})", path.display())
-        }
+        // Windows refuses it for its untrusted root already. Wine's `WinVerifyTrust` passes it, and cannot be held to a
+        // trusted root: it lacks roots Windows trusts for code signing, so a missing root alone is no refusal there.
+        (0, Some(Signer { certificates: ..2, .. })) => bail!("{} is signed by a certificate that vouches for itself", path.display()),
         (0, Some(Signer { name: Some(name), .. })) if publishers.contains(&name.as_str()) => Ok(()),
         (0, signer) => {
             let name = signer.and_then(|signer| signer.name);
@@ -64,8 +58,8 @@ pub fn check(path: &Path, publishers: &[&str]) -> Result<()> {
 struct Signer {
     /// The leaf certificate's display name.
     name: Option<String>,
-    /// The error bits of the signer's chain (`CERT_TRUST_*`); none when the chain is unknown.
-    chain: u32,
+    /// The signer's chain, its own certificate first: 1 for one that vouches for itself.
+    certificates: u32,
 }
 
 unsafe fn signer(state: HANDLE) -> Option<Signer> {
@@ -76,18 +70,14 @@ unsafe fn signer(state: HANDLE) -> Option<Signer> {
             return None;
         }
         let signer = WTHelperGetProvSignerFromChain(data, 0, 0, 0);
-        if signer.is_null() {
+        if signer.is_null() || (*signer).csCertChain == 0 {
             return None;
-        }
-        let context = (*signer).pChainContext;
-        let chain = if context.is_null() { 0 } else { (*context).TrustStatus.dwErrorStatus };
-        if (*signer).csCertChain == 0 {
-            return Some(Signer { name: None, chain });
         }
         let cert = (*(*signer).pasCertChain).pCert;
         let mut name = [0u16; 256];
         let len = CertGetNameStringW(cert, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, ptr::null(), name.as_mut_ptr(), name.len() as u32) as usize;
-        Some(Signer { name: (len > 1).then(|| String::from_utf16_lossy(&name[..len - 1])), chain })
+        let name = (len > 1).then(|| String::from_utf16_lossy(&name[..len - 1]));
+        Some(Signer { name, certificates: (*signer).csCertChain })
     }
 }
 
@@ -109,7 +99,7 @@ mod tests {
         assert!(check(Path::new(&path), &["Someone Else"]).is_err());
         if let Ok(forged) = env::var("IMPULSE_E2E_SELF_SIGNED") {
             let err = check(Path::new(&forged), &[signer.as_str()]).unwrap_err();
-            assert!(err.to_string().contains("no trusted root"), "{err}");
+            assert!(err.to_string().contains("vouches for itself"), "{err}");
         }
     }
 }

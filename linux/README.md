@@ -80,6 +80,7 @@ Impulse in a game's prefix reads Wand from Wand's prefix and keeps its own files
 - A trainer that must start the game itself is refused while the game runs, and under Proton the game always starts first.
 - Games with an anti-cheat launcher are untested.
 - The window's close button hides Impulse in the notification area by default. On a desktop without one, Wine shows a small window at the top left with Impulse's icon; Settings can make the close button quit instead.
+- Before a DLL enters the game, Impulse checks that WeMod signed it. Under Wine that check covers the signature, the signer's name and that a certificate authority issued the signer's certificate, but not which root vouches for it: Wine lacks some of the roots Windows trusts for code signing.
 - A Steam install in Flatpak is untested: keep `IMPULSE_HOME` inside the Flatpak's home (`~/.var/app/com.valvesoftware.Steam/`).
 
 ## Troubleshooting
