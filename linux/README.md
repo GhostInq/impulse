@@ -1,6 +1,10 @@
 # Impulse on Linux (Proton)
 
-Impulse runs on Linux through Steam's Proton, next to the game it trains. This is experimental: it is tested with GE-Proton 10 (Wine 10) and Wine 11, not yet with every game.
+Impulse runs on Linux through Steam's Proton, next to the game it trains. This is experimental.
+
+**Checked** under Wine 11.0 and GE-Proton 10-34 (Proton run the way Steam runs it, outside Steam): Impulse starts and draws (Wine's Direct3D and DXVK); started through `impulse-proton`, it starts the game, quits when the game's process tree ends and Proton returns the game's exit code; Steam's Linux libraries are listed; Wand's API bridge (WebView2 135) fetches; a DLL loads into a 64-bit and a 32-bit process and starts its export; signatures are checked; a keyboard hook sees keys pressed in the game's window; Wand's install is found in Wand's prefix.
+
+**Not yet checked**: a real Wand install and sign-in, a real trainer in a real game, Valve's Proton, the Steam client itself, the Steam Deck, and the phone panel's server.
 
 ## How it works
 
