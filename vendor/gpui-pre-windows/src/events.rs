@@ -785,6 +785,11 @@ impl WindowsWindowInner {
         if !self.hide_title_bar || self.state.is_fullscreen() || wparam.0 == 0 {
             return None;
         }
+        // Under Wine the whole window is the client area: a window whose client area is its
+        // window rect gets no window manager decorations, which would hide the top of ours.
+        if is_wine() {
+            return Some(0);
+        }
 
         unsafe {
             let params = lparam.0 as *mut NCCALCSIZE_PARAMS;
@@ -1012,6 +1017,34 @@ impl WindowsWindowInner {
         };
 
         unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
+        if is_wine() {
+            // No frame around the client area under Wine (see `handle_calc_client_size`):
+            // every edge resizes from inside it.
+            if self.is_resizable && !self.state.is_maximized() {
+                let mut rect = RECT::default();
+                unsafe { GetClientRect(handle, &mut rect) }.log_err();
+                let (x, y) = (cursor_point.x, cursor_point.y);
+                let left = x < frame_x;
+                let right = x >= rect.right - frame_x;
+                let top = y < frame_y;
+                let bottom = y >= rect.bottom - frame_y;
+                let edge = match (top, bottom, left, right) {
+                    (true, _, true, _) => Some(HTTOPLEFT),
+                    (true, _, _, true) => Some(HTTOPRIGHT),
+                    (_, true, true, _) => Some(HTBOTTOMLEFT),
+                    (_, true, _, true) => Some(HTBOTTOMRIGHT),
+                    (true, ..) => Some(HTTOP),
+                    (_, true, ..) => Some(HTBOTTOM),
+                    (_, _, true, _) => Some(HTLEFT),
+                    (_, _, _, true) => Some(HTRIGHT),
+                    _ => None,
+                };
+                if let Some(edge) = edge {
+                    return Some(edge as _);
+                }
+            }
+            return drag_area;
+        }
         if self.is_resizable
             && !self.state.is_maximized()
             && 0 <= cursor_point.y

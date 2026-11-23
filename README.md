@@ -70,7 +70,7 @@
 
 - **Plugins:** broader support for more sources of titles, maps, and trainers. The current host is alpha.
 - **Cheat Engine tables:** run tables with Cheat Engine as the backend.
-- **Proton and Steam Deck:** compatibility with Linux and handheld setups.
+- **Proton and Steam Deck:** Impulse beside a game in its Proton prefix, started from Steam's launch options. Experimental: see [Impulse on Linux](linux/README.md).
 
 ## Build from source
 

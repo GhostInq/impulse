@@ -8,10 +8,12 @@ use windows::{
         ViewManagement::{UIColorType, UISettings},
     },
     Win32::{
-        Foundation::*, Graphics::Dwm::*, System::LibraryLoader::LoadLibraryA,
+        Foundation::*,
+        Graphics::Dwm::*,
+        System::LibraryLoader::{GetModuleHandleA, GetProcAddress, LoadLibraryA},
         UI::WindowsAndMessaging::*,
     },
-    core::{BOOL, PCSTR},
+    core::{BOOL, PCSTR, s},
 };
 
 use crate::*;
@@ -172,6 +174,15 @@ pub(crate) fn system_appearance() -> Result<WindowAppearance> {
 #[inline(always)]
 fn is_color_light(color: &Color) -> bool {
     ((5 * color.G as u32) + (2 * color.R as u32) + color.B as u32) > (8 * 128)
+}
+
+/// Whether this process runs under Wine, whose ntdll alone exports `wine_get_version`.
+pub(crate) fn is_wine() -> bool {
+    static WINE: OnceLock<bool> = OnceLock::new();
+    *WINE.get_or_init(|| unsafe {
+        GetModuleHandleA(s!("ntdll.dll"))
+            .is_ok_and(|ntdll| GetProcAddress(ntdll, s!("wine_get_version")).is_some())
+    })
 }
 
 pub(crate) fn with_dll_library<R, F>(dll_name: PCSTR, f: F) -> Result<R>

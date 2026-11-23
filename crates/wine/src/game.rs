@@ -8,6 +8,7 @@ use std::{
     io::{self, Read, Seek, SeekFrom},
     path::PathBuf,
     ptr, slice,
+    sync::{Mutex, PoisonError},
 };
 
 use anyhow::{Result, bail};
@@ -149,7 +150,7 @@ impl Command {
         if unsafe { ResumeThread(thread.0) } == u32::MAX {
             bail!("cannot resume {}: {}", exe.display(), io::Error::last_os_error());
         }
-        Ok(Game { process, job, pid: started.dwProcessId })
+        Ok(Game { process, followed: job.is_some(), job: Mutex::new(job), pid: started.dwProcessId })
     }
 }
 
@@ -196,7 +197,10 @@ fn subsystem(exe: &std::path::Path) -> Option<u16> {
 /// The game Impulse started for Proton.
 pub struct Game {
     process: Handle,
-    job: Option<(Handle, Handle)>,
+    /// The job and its port, `None` once the port said the last process ended: the port says it once, and `wait`
+    /// may be asked again (Impulse quits with the game, and waits again if it was closed first).
+    job: Mutex<Option<(Handle, Handle)>>,
+    followed: bool,
     pid: u32,
 }
 
@@ -208,21 +212,26 @@ impl Game {
 
     /// Whether the game's whole process tree is followed; else only its first process.
     pub fn followed(&self) -> bool {
-        self.job.is_some()
+        self.followed
     }
 
     /// Blocks until the game, and every process it started, has ended. The first process's exit code: what
-    /// Proton hands back to Steam.
+    /// Proton hands back to Steam. Callers may wait at once from several threads, and again after an end.
     pub fn wait(&self) -> u32 {
-        if let Some((_, port)) = &self.job {
-            loop {
-                let (mut message, mut key, mut overlapped) = (0u32, 0usize, ptr::null_mut::<OVERLAPPED>());
-                // SAFETY: the port is live and the outputs outlive the call.
-                let ok = unsafe { GetQueuedCompletionStatus(port.0, &mut message, &mut key, &mut overlapped, INFINITE) };
-                // A failed port leaves the first process to wait for.
-                if ok == 0 || message == JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO {
-                    break;
+        {
+            // Held while waiting on the port, so a second waiter learns the end from the first.
+            let mut job = self.job.lock().unwrap_or_else(PoisonError::into_inner);
+            if let Some((_, port)) = job.as_ref() {
+                loop {
+                    let (mut message, mut key, mut overlapped) = (0u32, 0usize, ptr::null_mut::<OVERLAPPED>());
+                    // SAFETY: the port is live and the outputs outlive the call.
+                    let ok = unsafe { GetQueuedCompletionStatus(port.0, &mut message, &mut key, &mut overlapped, INFINITE) };
+                    // A failed port leaves the first process to wait for.
+                    if ok == 0 || message == JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO {
+                        break;
+                    }
                 }
+                *job = None;
             }
         }
         // SAFETY: the process handle is live.
@@ -284,6 +293,27 @@ mod tests {
         let got = command(r#"Impulse.exe --game "C:\My Game\g.exe" -a "b c""#).unwrap();
         let line = got.line();
         assert_eq!(String::from_utf16(&line[..line.len() - 1]).unwrap(), r#""C:\My Game\g.exe" -a "b c""#);
+    }
+
+    #[test]
+    fn a_game_and_what_it_starts_are_waited_for_and_waiting_again_returns_at_once() {
+        // `cmd` starts a second `cmd` that outlives it: the wait covers both, as it would a launcher and its game.
+        let command = Command {
+            exe: r"C:\Windows\System32\cmd.exe".into(),
+            rest: wide(r#"/D /C start "" /B C:\Windows\System32\cmd.exe /D /C ping -n 3 127.0.0.1 >NUL & exit 7"#),
+        };
+        let game = std::sync::Arc::new(command.start().unwrap());
+        assert!(game.followed());
+        let started = std::time::Instant::now();
+        let other = {
+            let game = game.clone();
+            std::thread::spawn(move || game.wait())
+        };
+        assert_eq!(game.wait(), 7);
+        assert_eq!(other.join().unwrap(), 7);
+        // The child pings for about two seconds after its parent exits.
+        assert!(started.elapsed() >= std::time::Duration::from_millis(1500), "{:?}", started.elapsed());
+        assert_eq!(game.wait(), 7, "a second wait returns at once");
     }
 
     #[test]

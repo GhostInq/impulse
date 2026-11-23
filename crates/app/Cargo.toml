@@ -29,7 +29,6 @@ updater.workspace = true
 wand.workspace = true
 wine.workspace = true
 
-anyhow.workspace = true
 blocking.workspace = true
 gpui-kit.workspace = true
 

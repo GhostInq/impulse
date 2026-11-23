@@ -1,0 +1,294 @@
+#!/usr/bin/env bash
+# impulse-proton: Impulse beside a Steam game on Linux, inside the game's Proton prefix.
+#
+#   impulse-proton setup [--exe PATH] [--tag vX.Y.Z]   get Impulse and a WebView2 runtime (once, and to update)
+#   impulse-proton wand [--proton PATH] [FILE]          Wand in a prefix of its own: install FILE (Wand-Setup.exe or
+#                                                       Wand-<version>-full.nupkg), then open Wand to sign in
+#   impulse-proton doctor                               what is set up, and where
+#   impulse-proton %command%                            Steam launch options: the game starts through Impulse
+#
+# Impulse runs in the game's own prefix, so it sees the game's process, its hotkeys work while the game is in front,
+# and it closes when the game does. Its settings and sign-in are shared by every game (IMPULSE_DATA_DIR); Wand's
+# files are read from Wand's prefix (IMPULSE_WAND_HOME). Everything lives in $IMPULSE_HOME.
+set -euo pipefail
+
+IMPULSE_HOME="${IMPULSE_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/impulse-proton}"
+BIN="$IMPULSE_HOME/bin"
+DATA="$IMPULSE_HOME/data"
+WAND="$IMPULSE_HOME/wand"
+LOG="$IMPULSE_HOME/impulse-proton.log"
+REPO="tweak-for-me/impulse"
+# The WebView2 Fixed Version runtime tested under Wine (newer ones are reported never to finish loading a page there).
+# The NuGet package repacks Microsoft's signed runtime; the hash pins the one tested.
+WEBVIEW2_VERSION="135.0.3179.98"
+WEBVIEW2_SHA256="a6647e22379156781d07894a59382e62bfb1b1413edbdb335ecbd811a8c72245"
+WEBVIEW2_URL="https://api.nuget.org/v3-flatcontainer/webview2.runtime.x64/$WEBVIEW2_VERSION/webview2.runtime.x64.$WEBVIEW2_VERSION.nupkg"
+# The user Proton gives every prefix.
+PREFIX_USER="steamuser"
+
+log() {
+    mkdir -p "$IMPULSE_HOME"
+    printf '%s %s\n' "$(date '+%F %T')" "$*" >>"$LOG"
+    printf 'impulse-proton: %s\n' "$*" >&2
+}
+
+die() {
+    log "error: $*"
+    exit 1
+}
+
+usage() {
+    sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+need() {
+    command -v "$1" >/dev/null 2>&1 || die "$1 is needed: install it with your package manager"
+}
+
+fetch() { # url file
+    if command -v curl >/dev/null 2>&1; then
+        curl -fL --retry 3 --progress-bar -o "$2" "$1"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q --show-progress -O "$2" "$1"
+    else
+        die "curl or wget is needed to download"
+    fi
+}
+
+check_sha256() { # file hash
+    need sha256sum
+    local found
+    found="$(sha256sum "$1" | cut -d' ' -f1)"
+    [ "$found" = "$2" ] || die "$(basename "$1") does not match its expected SHA-256 ($found)"
+}
+
+unzip_into() { # archive member-prefix destination: the members under the prefix, without it
+    local archive="$1" prefix="$2" destination="$3"
+    need python3
+    python3 -I - "$archive" "$prefix" "$destination" <<'PYTHON'
+import os, shutil, sys, zipfile
+archive, prefix, destination = sys.argv[1:]
+root = os.path.realpath(destination)
+with zipfile.ZipFile(archive) as package:
+    for member in package.infolist():
+        name = member.filename.replace("\\", "/")
+        if member.is_dir() or not name.startswith(prefix):
+            continue
+        # NuGet escapes some characters in names.
+        relative = name[len(prefix):].replace("%20", " ").replace("%2B", "+").replace("%5B", "[").replace("%5D", "]")
+        target = os.path.realpath(os.path.join(root, relative))
+        if not target.startswith(root + os.sep):
+            sys.exit(f"refusing {name}: it leaves the destination")
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with package.open(member) as source, open(target, "wb") as copy:
+            shutil.copyfileobj(source, copy)
+PYTHON
+}
+
+steam_root() {
+    local dir
+    for dir in "${STEAM_COMPAT_CLIENT_INSTALL_PATH:-}" "$HOME/.local/share/Steam" "$HOME/.steam/root" "$HOME/.steam/steam" \
+        "$HOME/.var/app/com.valvesoftware.Steam/data/Steam"; do
+        [ -n "$dir" ] && [ -d "$dir/steamapps" ] && { printf '%s\n' "$dir"; return 0; }
+    done
+    return 1
+}
+
+# The newest Proton: GE-Proton in compatibilitytools.d, then Valve's in the libraries' steamapps/common.
+find_proton() {
+    local steam
+    steam="$(steam_root)" || die "Steam's folder was not found: pass --proton /path/to/proton"
+    local found=()
+    local candidate
+    for candidate in "$steam"/compatibilitytools.d/*/proton "$steam"/steamapps/common/Proton*/proton; do
+        [ -x "$candidate" ] && found+=("$candidate")
+    done
+    [ "${#found[@]}" -gt 0 ] || die "no Proton found under $steam: install one in Steam or pass --proton /path/to/proton"
+    printf '%s\n' "${found[@]}" | awk -F/ '{print $(NF-1) "\t" $0}' | sort -V | tail -n1 | cut -f2-
+}
+
+# Runs a Windows program in Wand's prefix, as protontricks-launch does.
+in_wand_prefix() { # proton program args...
+    local proton="$1"
+    shift
+    local steam
+    steam="$(steam_root)" || die "Steam's folder was not found"
+    mkdir -p "$WAND"
+    STEAM_COMPAT_DATA_PATH="$WAND" STEAM_COMPAT_CLIENT_INSTALL_PATH="$steam" SteamAppId=0 SteamGameId=0 \
+        "$proton" run "$@"
+}
+
+wand_user() {
+    printf '%s\n' "$WAND/pfx/drive_c/users/$PREFIX_USER"
+}
+
+# The newest Wand.exe (or WeMod.exe of an older install) in Wand's prefix.
+wand_exe() {
+    local local_dir
+    local_dir="$(wand_user)/AppData/Local"
+    find "$local_dir/Wand" "$local_dir/WeMod" -maxdepth 2 \( -name Wand.exe -o -name WeMod.exe \) -path '*/app-*' 2>/dev/null |
+        awk -F/ '{print $(NF-1) "\t" $0}' | sort -V | tail -n1 | cut -f2-
+}
+
+cmd_setup() {
+    local exe="" tag=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --exe) exe="${2:?--exe needs a path}"; shift 2 ;;
+            --tag) tag="${2:?--tag needs a tag}"; shift 2 ;;
+            *) die "unknown option $1" ;;
+        esac
+    done
+    mkdir -p "$BIN" "$DATA"
+    # A stable path for Steam's launch options.
+    if [ "$(realpath "$0")" != "$(realpath -m "$IMPULSE_HOME/impulse-proton")" ]; then
+        install -m 0755 "$0" "$IMPULSE_HOME/impulse-proton"
+    fi
+
+    if [ -n "$exe" ]; then
+        install -m 0644 "$exe" "$BIN/Impulse.exe"
+        log "Impulse.exe copied from $exe"
+    else
+        need python3
+        local api="https://api.github.com/repos/$REPO/releases/latest" release
+        [ -n "$tag" ] && api="https://api.github.com/repos/$REPO/releases/tags/$tag"
+        release="$(mktemp)"
+        fetch "$api" "$release"
+        local asset
+        asset="$(python3 -I - "$release" <<'PYTHON'
+import json, sys
+release = json.load(open(sys.argv[1]))
+for asset in release.get("assets", []):
+    if asset.get("name") == "Impulse.exe":
+        digest = asset.get("digest") or ""
+        print(asset["browser_download_url"], digest.removeprefix("sha256:"), release.get("tag_name", ""))
+        break
+PYTHON
+)"
+        rm -f "$release"
+        [ -n "$asset" ] || die "the release has no Impulse.exe"
+        local url hash version
+        read -r url hash version <<<"$asset"
+        log "downloading Impulse $version"
+        fetch "$url" "$BIN/Impulse.exe.new"
+        if [ -n "$hash" ]; then
+            check_sha256 "$BIN/Impulse.exe.new" "$hash"
+        else
+            log "warning: the release names no digest for Impulse.exe; it was not checked"
+        fi
+        mv -f "$BIN/Impulse.exe.new" "$BIN/Impulse.exe"
+    fi
+
+    if [ "$(cat "$BIN/WebView2/.impulse-version" 2>/dev/null)" != "$WEBVIEW2_VERSION" ]; then
+        local package="$IMPULSE_HOME/webview2-$WEBVIEW2_VERSION.nupkg"
+        log "downloading the WebView2 runtime $WEBVIEW2_VERSION (about 250 MB)"
+        fetch "$WEBVIEW2_URL" "$package"
+        check_sha256 "$package" "$WEBVIEW2_SHA256"
+        rm -rf "$BIN/WebView2"
+        unzip_into "$package" "contentFiles/any/any/WebView2/" "$BIN/WebView2"
+        if [ ! -f "$BIN/WebView2/msedgewebview2.exe" ] || [ ! -f "$BIN/WebView2/msedge.dll" ]; then
+            die "the WebView2 package is incomplete"
+        fi
+        printf '%s\n' "$WEBVIEW2_VERSION" >"$BIN/WebView2/.impulse-version"
+        rm -f "$package"
+    fi
+    log "ready: put this in a game's launch options in Steam:"
+    printf '\n    %s %%command%%\n\n' "$IMPULSE_HOME/impulse-proton" >&2
+}
+
+cmd_wand() {
+    local proton="" file=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --proton) proton="${2:?--proton needs a path}"; shift 2 ;;
+            -*) die "unknown option $1" ;;
+            *) file="$1"; shift ;;
+        esac
+    done
+    [ -n "$proton" ] || proton="$(find_proton)"
+    [ -x "$proton" ] || die "$proton is not a Proton script"
+    log "Wand's prefix: $WAND/pfx (Proton: $proton)"
+    if [ ! -d "$(wand_user)" ]; then
+        log "making Wand's prefix"
+        in_wand_prefix "$proton" 'C:\windows\system32\cmd.exe' /c exit 0 || true
+        [ -d "$(wand_user)" ] || die "Proton did not make the prefix; see $LOG"
+    fi
+    case "$file" in
+        "") ;;
+        *.nupkg)
+            local version
+            version="$(basename "$file" | sed -n 's/^[A-Za-z]*-\([0-9][0-9.]*[0-9]\)-full\.nupkg$/\1/p')"
+            [ -n "$version" ] || die "$file is not named <Brand>-<version>-full.nupkg"
+            local brand
+            brand="$(basename "$file" | cut -d- -f1)"
+            local app
+            app="$(wand_user)/AppData/Local/$brand/app-$version"
+            log "unpacking $brand $version into $app"
+            unzip_into "$file" "lib/net45/" "$app"
+            ;;
+        *.exe)
+            log "running the installer $file"
+            in_wand_prefix "$proton" "$file" || true
+            ;;
+        *) die "$file is neither an installer (.exe) nor a package (.nupkg)" ;;
+    esac
+    local exe
+    exe="$(wand_exe)"
+    [ -n "$exe" ] || die "no Wand in its prefix: pass the installer or the package"
+    log "opening $exe: sign in, then close it"
+    in_wand_prefix "$proton" "$exe" || true
+    [ -d "$(wand_user)/AppData/Roaming/wemod" ] || [ -d "$(wand_user)/AppData/Roaming/Wand" ] ||
+        log "warning: Wand has kept no profile yet; open it again and sign in"
+}
+
+cmd_doctor() {
+    printf 'IMPULSE_HOME   %s\n' "$IMPULSE_HOME"
+    printf 'Impulse.exe    %s\n' "$([ -f "$BIN/Impulse.exe" ] && echo "$BIN/Impulse.exe" || echo "missing: run setup")"
+    printf 'WebView2       %s\n' "$(cat "$BIN/WebView2/.impulse-version" 2>/dev/null || echo "missing: run setup")"
+    printf 'data           %s\n' "$DATA"
+    printf 'Wand prefix    %s\n' "$([ -d "$(wand_user)" ] && wand_user || echo "missing: run wand")"
+    printf 'Wand           %s\n' "$(wand_exe || true)"
+    local profile="none: open Wand and sign in" dir
+    for dir in "$(wand_user)"/AppData/Roaming/{wemod,Wand}/'Local Storage'; do
+        [ -d "$dir" ] && { profile="$dir"; break; }
+    done
+    printf 'Wand profile   %s\n' "$profile"
+    printf 'Steam          %s\n' "$(steam_root || echo "not found")"
+    printf 'Proton         %s\n' "$( (find_proton) 2>/dev/null || echo "not found")"
+}
+
+# Steam's launch options: `.../proton <verb> <game.exe> <args>` becomes `.../proton <verb> Impulse.exe --game <game.exe>
+# <args>`. Proton then waits on Impulse, which starts the game and ends with it. Anything else starts unchanged.
+cmd_wrap() {
+    local args=("$@") at=-1 i
+    for ((i = 0; i + 2 < ${#args[@]}; i++)); do
+        if [ "$(basename "${args[i]}")" = "proton" ] && [[ "${args[i + 1]}" =~ ^(waitforexitandrun|run)$ ]]; then
+            at=$i
+        fi
+    done
+    if [ "$at" -lt 0 ]; then
+        log "not a Proton launch, starting it without Impulse: $*"
+        exec "$@"
+    fi
+    if [ ! -f "$BIN/Impulse.exe" ]; then
+        log "Impulse is not set up (impulse-proton setup), starting the game without it"
+        exec "$@"
+    fi
+    mkdir -p "$DATA"
+    export IMPULSE_DATA_DIR="$DATA"
+    if [ -d "$(wand_user)" ]; then
+        export IMPULSE_WAND_HOME
+        IMPULSE_WAND_HOME="$(wand_user)"
+    fi
+    local game="${args[at + 2]}"
+    log "starting ${SteamAppId:+app $SteamAppId, }$game through Impulse"
+    exec "${args[@]:0:at+2}" "$BIN/Impulse.exe" --game "$game" "${args[@]:at+3}"
+}
+
+case "${1:-}" in
+    setup) shift; cmd_setup "$@" ;;
+    wand) shift; cmd_wand "$@" ;;
+    doctor) cmd_doctor ;;
+    "" | -h | --help | help) usage ;;
+    *) cmd_wrap "$@" ;;
+esac

@@ -23,7 +23,12 @@ fn main() {
     // Steam's launch options on Linux put Impulse in the game's place (`--game <exe> <args>`): Proton and Steam wait
     // on this process, so it starts the game and lasts as long as the game.
     let game = wine::command();
-    let wine = wine::version().map(|version| (version, prepare_for_wine()));
+    let under_wine = wine::version();
+    if under_wine.is_some() {
+        // Wine has no DirectComposition: GPUI then presents through a plain swap chain.
+        // SAFETY: changing the environment is always sound on Windows, and no other thread runs yet.
+        unsafe { env::set_var("GPUI_DISABLE_DIRECT_COMPOSITION", "1") };
+    }
     // One Impulse at a time: a second start shows the first, which may sit in the tray. An update's restart
     // waits for the one it replaces instead.
     if !tray::claim(updater::restarted()) {
@@ -35,22 +40,19 @@ fn main() {
     }
     let data_dir = data_dir();
     journal::init(&data_dir);
-    if let Some((version, prepared)) = wine {
-        log::info!("under Wine {version}");
-        if let Err(e) = prepared {
-            log::warn!("{e:#}");
-        }
+    if let Some(version) = under_wine {
+        log::info!(target: "impulse", "under Wine {version}");
     }
     let game = match game.as_ref().map(wine::Command::start).transpose() {
         Ok(game) => game.map(Arc::new),
         Err(e) => {
-            log::error!("the game Steam asked for did not start: {e:#}");
+            log::error!(target: "impulse", "the game Steam asked for did not start: {e:#}");
             journal::closing();
             std::process::exit(1);
         }
     };
     if let Some(game) = &game {
-        log::info!("started the game for Proton, process {}{}", game.pid(), if game.followed() { "" } else { ", its first process only" });
+        log::info!(target: "impulse", "started the game for Proton, process {}{}", game.pid(), if game.followed() { "" } else { ", its first process only" });
     }
     if let Ok(exe) = env::current_exe() {
         updater::cleanup(&exe);
@@ -108,7 +110,7 @@ fn main() {
         if let Some(game) = waited {
             cx.spawn(async move |cx| {
                 let code = blocking::unblock(move || game.wait()).await;
-                log::info!("the game ended with code {code}: Impulse quits with it");
+                log::info!(target: "impulse", "the game ended with code {code}: Impulse quits with it");
                 journal::closing();
                 cx.update(|cx| cx.quit());
             })
@@ -129,16 +131,6 @@ fn data_dir() -> PathBuf {
         return wine::dos_path(&dir).unwrap_or_else(|| dir.into());
     }
     PathBuf::from(env::var_os("LOCALAPPDATA").expect("LOCALAPPDATA is set on Windows")).join("Impulse")
-}
-
-/// What differs under Wine, set before GPUI and the first window. The error says what could not be set.
-fn prepare_for_wine() -> anyhow::Result<()> {
-    // Wine has no DirectComposition: GPUI then presents through a plain swap chain.
-    // SAFETY: changing a variable is always sound on Windows, and no other thread runs yet.
-    unsafe { env::set_var("GPUI_DISABLE_DIRECT_COMPOSITION", "1") };
-    let exe = env::current_exe()?;
-    let name = exe.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_else(|| "Impulse.exe".into());
-    wine::own_title_bar(&name)
 }
 
 /// Windows exit codes are unsigned; the process's is signed.

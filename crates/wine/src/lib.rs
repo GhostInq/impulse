@@ -4,7 +4,6 @@
 
 mod game;
 mod path;
-mod window;
 
 use std::{
     ffi::{CStr, c_char},
@@ -16,7 +15,6 @@ use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress
 
 pub use game::{Command, FLAG, Game, command};
 pub use path::{dos_path, steam_root};
-pub use window::own_title_bar;
 
 /// Wine's version (`11.0`), `None` on Windows. Read once.
 pub fn version() -> Option<&'static str> {

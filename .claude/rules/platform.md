@@ -50,10 +50,9 @@ Small Windows and I/O crates with no dependency on our other crates but `model` 
 - `sections(CHANGELOG.md)`: `## [x.y.z] - YYYY-MM-DD` then markdown; `base` drops a `-pre`, so one section covers a version's pre-releases and its release.
 
 ## wine
-- `version` (Wine's own, `None` on Windows), `dos_path` (a Unix path as Wine names it: `Z:\...`, or a drive Proton made), `steam_root` (Steam's folder on the Linux side, from `STEAM_COMPAT_CLIENT_INSTALL_PATH`), `own_title_bar(exe)`, `command`, `Command::start`, `Game`.
+- `version` (Wine's own, `None` on Windows), `dos_path` (a Unix path as Wine names it: `Z:\...`, or a drive Proton made), `steam_root` (Steam's folder on the Linux side, from `STEAM_COMPAT_CLIENT_INSTALL_PATH`), `command`, `Command::start`, `Game`.
 - Every answer is `None` on Windows: callers ask unconditionally and Windows behaves as before.
 - `--game <exe> <args>` first on the command line is the Linux launcher's: Proton turned only Impulse's path into a Windows one and waits on Impulse, so `start` does what Proton would have (the exe's Unix path through Wine, the rest of the line as written, the inherited folder and environment, a console program gets a console) inside a job, and `Game::wait` returns when the job's last process ends: a launcher that starts the game and exits does not end it. The first process's exit code goes back to Proton.
-- `own_title_bar` writes Wine's per-program `X11 Driver\Decorated=N` unless the user set it: a caption-styled window that draws its own title bar is otherwise cut off under a window manager's. Wine reads it when the first window is made.
 
 ## pe
 - `header` (machine, timestamp) and `export` (RVA, forwarders skipped). `header` reads headers only: executables can be gigabytes.
