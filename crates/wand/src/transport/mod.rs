@@ -102,4 +102,33 @@ mod tests {
         assert_eq!(response.status, 400);
         assert!(response.body.contains("`code`"), "the 400 is not about the code");
     }
+
+    /// The whole bridge without the network: WebView2 starts, loads the page, fetches from a server on this
+    /// machine and hands the answer back. Needs a WebView2 runtime (under Wine: `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER`).
+    #[tokio::test]
+    #[ignore = "starts WebView2"]
+    async fn a_local_server_answers_through_the_bridge() {
+        use std::{
+            io::{Read, Write},
+            net::TcpListener,
+        };
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://127.0.0.1:{}/ping", listener.local_addr().unwrap().port());
+        thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut head = [0u8; 4096];
+            let _ = socket.read(&mut head);
+            let body = r#"{"pong":true}"#;
+            let answer = format!(
+                "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket.write_all(answer.as_bytes()).unwrap();
+        });
+        let dir = std::env::temp_dir().join(format!("impulse-bridge-local-{}", std::process::id()));
+        let request = Request { method: "GET".into(), url, headers: vec![("Accept".into(), "application/json".into())], body: None };
+        let response = Transport::spawn(dir).unwrap().fetch(request).await.unwrap();
+        assert_eq!((response.status, response.body.as_str()), (200, r#"{"pong":true}"#));
+    }
 }

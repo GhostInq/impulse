@@ -14,11 +14,10 @@ use super::{
 const FULLY_INSTALLED: u32 = 4;
 
 pub fn apps() -> Vec<App> {
-    let Some(root) = install_dir() else {
-        return Vec::new();
-    };
+    // Under Proton the prefix's Steam is a stand-in without records: Steam's own folder is on the Linux side.
+    let roots: Vec<PathBuf> = install_dir().into_iter().chain(wine::steam_root()).collect();
     let mut seen = HashSet::new();
-    libraries(&root).iter().flat_map(|lib| manifests(lib)).filter(|app| seen.insert(app.store_id.clone())).collect()
+    roots.iter().flat_map(|root| libraries(root)).flat_map(|lib| manifests(&lib)).filter(|app| seen.insert(app.store_id.clone())).collect()
 }
 
 fn install_dir() -> Option<PathBuf> {
@@ -51,7 +50,8 @@ fn libraries(root: &Path) -> Vec<PathBuf> {
             Node::Str(path) => Some(path.as_str()),
             Node::Map(_) => folder.str("path"),
         };
-        if let Some(path) = path.map(PathBuf::from)
+        // Steam on Linux records Unix paths; Wine names them on one of its drives.
+        if let Some(path) = path.map(|path| wine::dos_path(path).unwrap_or_else(|| PathBuf::from(path)))
             && path.is_dir()
             && !libs.iter().any(|lib| same_path(lib, &path))
         {

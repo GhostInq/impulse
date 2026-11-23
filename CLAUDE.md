@@ -35,6 +35,7 @@ Native Rust + GPUI client for the user's own Wand (WeMod) account and install. W
 - `hotkeys`, `overlay`, `tray`, `video`, `sound` - Win32 and media leaves: key hooks, the overlay's window calls, the tray icon, clips on the GPU, cue sounds.
 - `updater` - self-update: the release feed, the download checked against its digest, the swap of the running executable, `CHANGELOG.md`'s sections.
 - `journal`, `disk`, `fetch`, `pe` - the log, atomic file writes and typed JSON files, public CDN GETs, PE headers.
+- `wine` - running under Wine or Proton: detection, Unix paths in Windows form, Steam's Linux-side folder, the game Proton started through Impulse (`--game`).
 - `checks` - tests holding the crate graph, file sizes, the texts (no literal caption, every id in every language) and the rule files' globs; they cover `web/panel` too.
 
 ## Rules

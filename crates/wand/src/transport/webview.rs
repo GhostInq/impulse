@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     collections::HashMap,
+    env,
     path::Path,
     sync::{Arc, Mutex, mpsc::SyncSender},
     thread,
@@ -55,6 +56,7 @@ struct Reply {
 }
 
 pub(super) fn run(data_dir: &Path, started: SyncSender<EventLoopProxy<Cmd>>) {
+    name_runtime_under_wine();
     let event_loop = EventLoopBuilder::<Cmd>::with_user_event().with_any_thread(true).with_dpi_aware(false).build();
     let proxy = event_loop.create_proxy();
     let _ = started.send(proxy.clone());
@@ -121,6 +123,26 @@ pub(super) fn run(data_dir: &Path, started: SyncSender<EventLoopProxy<Cmd>>) {
         }
     });
 }
+
+/// Wine has no WebView2 of its own, and its loader cannot find a Fixed Version runtime unless told where: the one
+/// beside Impulse (`WebView2\msedgewebview2.exe`, where the Linux launcher puts it) is named to the loader, unless
+/// `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER` already names one.
+fn name_runtime_under_wine() {
+    if wine::version().is_none() || env::var_os(RUNTIME).is_some() {
+        return;
+    }
+    let Some(dir) = env::current_exe().ok().and_then(|exe| Some(exe.parent()?.join("WebView2"))) else {
+        return;
+    };
+    if !dir.join("msedgewebview2.exe").is_file() {
+        return log::warn!("no WebView2 runtime in {}: Wand sign-in needs one under Wine", dir.display());
+    }
+    log::debug!("WebView2 runtime: {}", dir.display());
+    // SAFETY: changing the environment is always sound on Windows, whatever other threads do.
+    unsafe { env::set_var(RUNTIME, &dir) };
+}
+
+const RUNTIME: &str = "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER";
 
 // After some hard kills WebView2 keeps the profile busy for about 50 s; a clean exit frees it at once.
 fn build_retrying(

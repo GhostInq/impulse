@@ -14,7 +14,10 @@ use rusty_leveldb::{DB, Options};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::texts::{NOT_INSTALLED, SIGNED_OUT, text};
+use crate::{
+    install::{self, Scope},
+    texts::{NOT_INSTALLED, SIGNED_OUT, text},
+};
 
 // Chromium layout: `_<origin>\0` + script key; both keys and values carry an encoding byte.
 const KEY: &[u8] = b"_file://\x00\x01infinity:globalStore";
@@ -72,13 +75,13 @@ pub fn customize(cheats: &mut [model::Cheat], custom: &HashMap<String, Slots>) {
 }
 
 fn profiles() -> Vec<PathBuf> {
-    let root = env::var_os("APPDATA").map(PathBuf::from).unwrap_or_default();
+    let root = install::app_data(Scope::Roaming).unwrap_or_default();
     PROFILES.iter().map(|profile| root.join(profile).join(r"Local Storage\leveldb")).collect()
 }
 
 /// Each profile's store; a profile's error only when none could be read.
 fn stores() -> Result<Vec<Value>> {
-    env::var_os("APPDATA").context("APPDATA is not set")?;
+    install::app_data(Scope::Roaming).context("APPDATA is not set")?;
     let mut found = Vec::new();
     let mut failed = None;
     for dir in profiles() {

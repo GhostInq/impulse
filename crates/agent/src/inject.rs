@@ -298,6 +298,32 @@ mod tests {
     }
 
     #[test]
+    fn a_64_bit_process_loads_an_x64_image_and_starts_its_export() {
+        // Our kernel32's LoadLibraryW must be the target's: true on Windows, and checked here under Wine.
+        let copy = env::current_exe().unwrap().with_file_name(format!("x64-{}.dll", std::process::id()));
+        fs::copy(r"C:\Windows\System32\dbghelp.dll", &copy).unwrap();
+        let mut shell = Command::new(r"C:\Windows\System32\cmd.exe");
+        shell.arg("/D").stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
+        let mut game = Wow64(shell.spawn().unwrap());
+        let target = process::of(game.0.id()).unwrap();
+        let mut loaded = load(&target, &Image::unchecked(copy.to_str().unwrap()), "SymCleanup", &[0; 8]);
+        // A process just made may not have mapped its modules yet.
+        for _ in 0..100 {
+            if loaded.is_ok() {
+                break;
+            }
+            sleep(Duration::from_millis(100));
+            loaded = load(&target, &Image::unchecked(copy.to_str().unwrap()), "SymCleanup", &[0; 8]);
+        }
+        sleep(Duration::from_millis(300));
+        let alive = game.0.try_wait().unwrap().is_none();
+        drop(game);
+        fs::remove_file(&copy).ok();
+        loaded.unwrap();
+        assert!(alive, "the export crashed the process");
+    }
+
+    #[test]
     fn an_x86_image_never_enters_an_x64_process() {
         let me = process::of(std::process::id()).unwrap();
         let err = load(&me, &Image::unchecked_x86(KERNEL32_X86), "lstrlenW", &[]).unwrap_err();

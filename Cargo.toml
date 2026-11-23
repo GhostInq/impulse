@@ -31,6 +31,7 @@ tray = { path = "crates/tray" }
 updater = { path = "crates/updater" }
 video = { path = "crates/video" }
 wand = { path = "crates/wand" }
+wine = { path = "crates/wine" }
 
 aes = "0.8"
 anyhow = "1"

@@ -13,6 +13,7 @@ disk.workspace = true
 fetch.workspace = true
 model.workspace = true
 pe.workspace = true
+wine.workspace = true
 
 anyhow.workspace = true
 blocking.workspace = true

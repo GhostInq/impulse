@@ -294,25 +294,19 @@ impl DirectWriteState {
         }
         unsafe {
             let builder = factory.CreateFontFallbackBuilder()?;
-            let font_set = &system_font_collection.GetFontSet()?;
             let mut unicode_ranges = Vec::new();
             for family_name in fallback_list {
                 let family_name = HSTRING::from(family_name);
-                let Some(fonts) = font_set
-                    .GetMatchingFonts(
-                        &family_name,
-                        DWRITE_FONT_WEIGHT_NORMAL,
-                        DWRITE_FONT_STRETCH_NORMAL,
-                        DWRITE_FONT_STYLE_NORMAL,
-                    )
-                    .log_err()
-                else {
+                let Some(font) = matching_faces(
+                    system_font_collection,
+                    &family_name,
+                    DWRITE_FONT_WEIGHT_NORMAL,
+                    DWRITE_FONT_STYLE_NORMAL,
+                )
+                .log_err()
+                .and_then(|faces| faces.into_iter().next()) else {
                     continue;
                 };
-                let Ok(font_face) = fonts.GetFontFaceReference(0) else {
-                    continue;
-                };
-                let font = font_face.CreateFontFace()?;
                 let mut count = 0;
                 font.GetUnicodeRanges(None, &mut count).ok();
                 if count == 0 {
@@ -369,23 +363,18 @@ impl DirectWriteState {
         } else {
             gpui::font_name_with_fallbacks_shared(&family, &system_ui_font_name)
         };
-        let fontset = unsafe { collection.GetFontSet().log_err()? };
         let font_family_h = HSTRING::from(family.as_str());
-        let font = unsafe {
-            fontset
-                .GetMatchingFonts(
-                    &font_family_h,
-                    font_weight_to_dwrite(weight),
-                    DWRITE_FONT_STRETCH_NORMAL,
-                    font_style_to_dwrite(style),
-                )
-                .log_err()?
+        let faces = unsafe {
+            matching_faces(
+                collection,
+                &font_family_h,
+                font_weight_to_dwrite(weight),
+                font_style_to_dwrite(style),
+            )
+            .log_err()?
         };
-        let total_number = unsafe { font.GetFontCount() };
-        for index in 0..total_number {
+        for font_face in faces {
             let res = maybe!({
-                let font_face_ref = unsafe { font.GetFontFaceReference(index).log_err()? };
-                let font_face = unsafe { font_face_ref.CreateFontFace().log_err()? };
                 let direct_write_features =
                     unsafe { Self::generate_font_features(factory, features).log_err()? };
                 let fallbacks = fallbacks.as_ref().and_then(|fallbacks| {
@@ -1607,6 +1596,63 @@ fn get_font_names_from_collection(
         }
 
         result
+    }
+}
+
+/// The faces of `family` in `collection` that match `weight` and `style`, closest first. Through the
+/// font set when it can; Wine leaves `IDWriteFontSet::GetMatchingFonts` unimplemented, so else through
+/// the family's own list, which every DirectWrite has.
+unsafe fn matching_faces(
+    collection: &IDWriteFontCollection1,
+    family: &HSTRING,
+    weight: DWRITE_FONT_WEIGHT,
+    style: DWRITE_FONT_STYLE,
+) -> Result<Vec<IDWriteFontFace3>> {
+    unsafe {
+        let by_set = collection.GetFontSet().and_then(|set| {
+            set.GetMatchingFonts(family, weight, DWRITE_FONT_STRETCH_NORMAL, style)
+        });
+        let fonts = match by_set {
+            Ok(fonts) => fonts,
+            Err(by_set) => {
+                return by_family(collection, family, weight, style).map_err(|_| by_set.into());
+            }
+        };
+        Ok((0..fonts.GetFontCount())
+            .filter_map(|index| {
+                fonts
+                    .GetFontFaceReference(index)
+                    .and_then(|reference| reference.CreateFontFace())
+                    .log_err()
+            })
+            .collect())
+    }
+}
+
+unsafe fn by_family(
+    collection: &IDWriteFontCollection1,
+    family: &HSTRING,
+    weight: DWRITE_FONT_WEIGHT,
+    style: DWRITE_FONT_STYLE,
+) -> Result<Vec<IDWriteFontFace3>> {
+    unsafe {
+        let (mut index, mut exists) = (0, BOOL(0));
+        collection.FindFamilyName(family, &mut index, &mut exists)?;
+        if !exists.as_bool() {
+            return Ok(Vec::new());
+        }
+        let fonts = collection
+            .GetFontFamily(index)?
+            .GetMatchingFonts(weight, DWRITE_FONT_STRETCH_NORMAL, style)?;
+        Ok((0..fonts.GetFontCount())
+            .filter_map(|index| {
+                fonts
+                    .GetFont(index)
+                    .and_then(|font| font.CreateFontFace())
+                    .and_then(|face| face.cast::<IDWriteFontFace3>())
+                    .log_err()
+            })
+            .collect())
     }
 }
 

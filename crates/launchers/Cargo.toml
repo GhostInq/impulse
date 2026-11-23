@@ -10,6 +10,7 @@ workspace = true
 [dependencies]
 model.workspace = true
 pe.workspace = true
+wine.workspace = true
 
 aes.workspace = true
 anyhow.workspace = true

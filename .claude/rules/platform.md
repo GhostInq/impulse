@@ -1,6 +1,6 @@
 ---
 paths:
-  - "crates/{hotkeys,overlay,tray,video,sound,journal,disk,fetch,pe,updater}/**"
+  - "crates/{hotkeys,overlay,tray,video,sound,journal,disk,fetch,pe,updater,wine}/**"
 ---
 
 # Platform leaves
@@ -48,6 +48,12 @@ Small Windows and I/O crates with no dependency on our other crates but `model` 
 - The feed is the publisher: https only (plain http to this machine for a feed under test), and the digest vouches for the transport, not for whoever runs the feed. A feed other than the project's own is the user's choice (`update_feed` in `settings.json`). The executable stays under `fetch`'s 64 MiB cap.
 - `download` writes `<exe>.new` after the digest matches. `swap(exe)` renames the running executable to `<exe>.old`, then `<exe>.new` into its place, and puts the old one back if that fails; Windows renames a running executable but never overwrites it. A crash between the two renames leaves no executable at the path. `cleanup` (at start) removes `.old` and a stale `.new`. `restart` starts the new executable with `--restarted <pid>`; `restarted()` reads it for `tray::claim`.
 - `sections(CHANGELOG.md)`: `## [x.y.z] - YYYY-MM-DD` then markdown; `base` drops a `-pre`, so one section covers a version's pre-releases and its release.
+
+## wine
+- `version` (Wine's own, `None` on Windows), `dos_path` (a Unix path as Wine names it: `Z:\...`, or a drive Proton made), `steam_root` (Steam's folder on the Linux side, from `STEAM_COMPAT_CLIENT_INSTALL_PATH`), `own_title_bar(exe)`, `command`, `Command::start`, `Game`.
+- Every answer is `None` on Windows: callers ask unconditionally and Windows behaves as before.
+- `--game <exe> <args>` first on the command line is the Linux launcher's: Proton turned only Impulse's path into a Windows one and waits on Impulse, so `start` does what Proton would have (the exe's Unix path through Wine, the rest of the line as written, the inherited folder and environment, a console program gets a console) inside a job, and `Game::wait` returns when the job's last process ends: a launcher that starts the game and exits does not end it. The first process's exit code goes back to Proton.
+- `own_title_bar` writes Wine's per-program `X11 Driver\Decorated=N` unless the user set it: a caption-styled window that draws its own title bar is otherwise cut off under a window manager's. Wine reads it when the first window is made.
 
 ## pe
 - `header` (machine, timestamp) and `export` (RVA, forwarders skipped). `header` reads headers only: executables can be gigabytes.

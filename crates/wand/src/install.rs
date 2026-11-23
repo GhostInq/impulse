@@ -47,19 +47,46 @@ impl Install {
 
 /// Every installed version of every brand, newest first.
 pub fn installs() -> Vec<Install> {
-    let Some(local) = env::var_os("LOCALAPPDATA") else {
+    let Some(local) = app_data(Scope::Local) else {
         return Vec::new();
     };
-    installs_in(Path::new(&local))
+    installs_in(&local)
 }
 
 /// The folders where Wand keeps the trainer DLLs it downloaded, one per brand.
 pub fn trainer_caches() -> Vec<PathBuf> {
-    let Some(roaming) = env::var_os("APPDATA") else {
+    let Some(roaming) = app_data(Scope::Roaming) else {
         return Vec::new();
     };
-    BRANDS.iter().map(|brand| Path::new(&roaming).join(brand).join(r"App\trainers")).collect()
+    BRANDS.iter().map(|brand| roaming.join(brand).join(r"App\trainers")).collect()
 }
+
+#[derive(Clone, Copy)]
+pub enum Scope {
+    /// `AppData\Local`: the installs.
+    Local,
+    /// `AppData\Roaming`: the profiles and the trainer downloads.
+    Roaming,
+}
+
+/// Wand's per-user folder: this user's, or under Wine the user folder of the prefix Wand is installed in, which the
+/// Linux launcher names in `IMPULSE_WAND_HOME` (`C:\users\<name>` of that prefix, as a Unix or a Windows path).
+pub fn app_data(scope: Scope) -> Option<PathBuf> {
+    if let Some(home) = env::var(HOME).ok().filter(|home| !home.is_empty()) {
+        let home = wine::dos_path(&home).unwrap_or_else(|| home.into());
+        return Some(home.join(match scope {
+            Scope::Local => r"AppData\Local",
+            Scope::Roaming => r"AppData\Roaming",
+        }));
+    }
+    env::var_os(match scope {
+        Scope::Local => "LOCALAPPDATA",
+        Scope::Roaming => "APPDATA",
+    })
+    .map(PathBuf::from)
+}
+
+const HOME: &str = "IMPULSE_WAND_HOME";
 
 /// Wand's service and plugin in `trainerlib` for a trainer of that architecture.
 pub fn binaries(trainerlib: &Path, x64: bool) -> [PathBuf; 2] {
