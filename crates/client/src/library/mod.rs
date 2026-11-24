@@ -183,24 +183,20 @@ impl Library {
         }
     }
 
-    /// The catalog's records with a trainer, by index, in the trainer picker's order: `game`'s title first, then the
-    /// other editions of its install, then the likest to its name.
-    pub fn trainer_records(&self, game: &Game) -> Vec<usize> {
+    /// The catalog's records with a trainer, by index, in the trainer picker's order, and how many lead it as `game`'s
+    /// own: its title's and the one in use, its install's other records, those named alike. The rest follow by likeness.
+    pub fn trainer_records(&self, game: &Game) -> (Vec<usize>, usize) {
         let with: Vec<usize> = (0..self.catalog.len()).filter(|&at| self.catalog[at].trainer.is_some()).collect();
-        let mut order: Vec<usize> =
-            titles::likeness(&game.name, with.iter().map(|&at| self.catalog[at].name.as_str())).into_iter().map(|at| with[at]).collect();
-        let same = one_install(game);
+        let likest = titles::likeness(&game.name, with.iter().map(|&at| self.catalog[at].name.as_str())).into_iter().map(|at| with[at]);
+        let (same, in_use) = (one_install(game), game.trained_by());
         let group = |record: &model::Game| {
-            if record.title_id == game.source.title_id {
-                0
-            } else if same(record) {
-                1
-            } else {
-                2
-            }
+            let title = record.title_id == game.source.title_id || in_use.is_some_and(|used| used.id == record.id);
+            [title, same(record), titles::alike(&record.name, &game.source.name)].iter().position(|&is| is).unwrap_or(3)
         };
-        order.sort_by_key(|&at| group(&self.catalog[at]));
-        order
+        let mut order: Vec<(usize, usize)> = likest.map(|at| (group(&self.catalog[at]), at)).collect();
+        order.sort_by_key(|&(group, _)| group);
+        let own = order.iter().take_while(|&&(group, _)| group < 3).count();
+        (order.into_iter().map(|(_, at)| at).collect(), own)
     }
 }
 
@@ -480,14 +476,20 @@ mod tests {
     }
 
     #[test]
-    fn the_trainer_picker_lists_records_with_a_trainer_its_titles_then_its_installs_records_first() {
-        let list = listed(catalog(), None);
-        assert_eq!(list.trainer_records(&list.games[0]), [1, 4, 2]);
+    fn the_trainer_picker_opens_on_the_games_own_records_its_titles_its_installs_records_then_alike_names() {
         let mut all = catalog();
         all[0].exe = Some("echoes.exe".into());
-        all.push(with_exe(record("wand:8", "dx", "gog:1", Some(&[1])), "echoes.exe"));
-        let list = listed(all, None);
-        assert_eq!(list.trainer_records(&list.games[0]), [1, 4, 5, 2]);
+        // A collection's other game lists the same store id with its own version file: not the game's own.
+        let collected = model::Game { name: "Another Game".into(), ..with_exe(record("wand:9", "c", "gog:1", Some(&[1])), "other.exe") };
+        let unrelated = model::Game { name: "007 First Light".into(), ..record("wand:10", "z", "steam:10", Some(&[1])) };
+        all.extend([with_exe(record("wand:8", "dx", "gog:1", Some(&[1])), "echoes.exe"), collected, unrelated]);
+        let mut list = listed(all, None);
+        let (order, own) = list.trainer_records(&list.games[0]);
+        assert_eq!((&order[..own], order.len()), (&[1, 4, 5, 2][..], 6));
+        // The trainer in use is the game's own, whatever its name.
+        list.relink(link("wand:10"));
+        let (order, own) = list.trainer_records(&list.games[0]);
+        assert_eq!(&order[..own], [1, 4, 7, 5, 2]);
     }
 
     fn with_exe(mut record: model::Game, exe: &str) -> model::Game {

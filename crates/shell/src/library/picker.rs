@@ -1,7 +1,7 @@
 //! `+ ADD`: a game by its executable. The catalog games that keep their `exe` beside it are offered;
 //! one is added at once, several or none open the picker, where the user finds it by name. The same picker chooses
-//! the trainer of a listed game: its title's other records first, then every trainer by likeness of name. And it is
-//! the search (Ctrl+K): a listed game or a catalog one to open, by name.
+//! the trainer of a listed game: it opens on the game's own records, and any other trainer is found by name. And it
+//! is the search (Ctrl+K): a listed game or a catalog one to open, by name.
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -41,8 +41,8 @@ const SHOWN: usize = 50;
 enum Purpose {
     /// `owned`: the choices are the games the executable belongs to.
     Add { exe: PathBuf, owned: bool },
-    /// `current`: the record whose trainer the game uses now.
-    Trainer { game: GameId, current: Option<Ref> },
+    /// `current`: the record whose trainer the game uses now; `own`: the leading choices that are the game's own.
+    Trainer { game: GameId, current: Option<Ref>, own: usize },
     /// A row per choice.
     Find { finds: Vec<Find> },
 }
@@ -119,12 +119,13 @@ impl GamePicker {
     pub fn trainer(&mut self, id: &GameId, window: &mut Window, cx: &mut Context<Self>) {
         let library = self.library.read(cx);
         let (Load::Ready(list), Some(game)) = (library.list(), library.game(id)) else { return };
-        let choices = list.trainer_records(game).into_iter().map(|at| Choice::of(&list.catalog, at)).collect();
+        let (records, own) = list.trainer_records(game);
+        let choices = records.into_iter().map(|at| Choice::of(&list.catalog, at)).collect();
         let subject = match &game.store {
             Some(store) => format!("{}  {store}", game.name),
             None => game.name.to_string(),
         };
-        let purpose = Purpose::Trainer { game: id.clone(), current: game.trained_by().map(|record| record.id.clone()) };
+        let purpose = Purpose::Trainer { game: id.clone(), current: game.trained_by().map(|record| record.id.clone()), own };
         let games = list.catalog.clone();
         self.open(purpose, games, choices, subject.into(), window, cx);
     }
@@ -184,6 +185,7 @@ impl GamePicker {
             Purpose::Find { finds } => rank(finds, &query),
             // The whole catalog waits for a name.
             Purpose::Add { owned: false, .. } if query.is_empty() => Vec::new(),
+            Purpose::Trainer { own, .. } if query.is_empty() => (0..*own).collect(),
             _ => (0..choices.len()).filter(|&at| choices[at].search.contains(&query)).collect(),
         };
         picker.shown.truncate(SHOWN);

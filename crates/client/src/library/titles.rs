@@ -1,4 +1,5 @@
-//! Which discovered title is a library game's: by store id, never by name; names only order the picker.
+//! Which discovered title is a library game's: by store id, never by name; names only order the picker and say which
+//! records it opens on.
 
 use std::{cmp::Reverse, collections::HashSet};
 
@@ -17,7 +18,6 @@ pub fn matched<'a>(game: &Game, titles: &'a [Title]) -> Option<&'a Title> {
 /// A picker's order of `names` for a game named `name`, by index: the same name first, then a name holding the other,
 /// then by the words they share; ties by name.
 pub fn likeness<'a>(name: &str, names: impl IntoIterator<Item = &'a str>) -> Vec<usize> {
-    let plain = |text: &str| text.chars().filter(|c| c.is_alphanumeric() || c.is_whitespace()).collect::<String>().to_lowercase();
     let wanted = plain(name);
     let words: HashSet<&str> = wanted.split_whitespace().collect();
     let mut order: Vec<(u8, Reverse<usize>, String, usize)> = names
@@ -38,6 +38,59 @@ pub fn likeness<'a>(name: &str, names: impl IntoIterator<Item = &'a str>) -> Vec
         .collect();
     order.sort();
     order.into_iter().map(|(.., at)| at).collect()
+}
+
+/// Words that name an edition rather than a game, as they end a name ("Definitive Edition", "Game of the Year").
+const EDITION_WORDS: &[&str] = &[
+    "anniversary",
+    "collector",
+    "collectors",
+    "complete",
+    "cut",
+    "definitive",
+    "deluxe",
+    "digital",
+    "director",
+    "directors",
+    "edition",
+    "enhanced",
+    "extended",
+    "game",
+    "gold",
+    "goty",
+    "hd",
+    "legendary",
+    "of",
+    "premium",
+    "remaster",
+    "remastered",
+    "special",
+    "standard",
+    "the",
+    "ultimate",
+    "year",
+];
+
+/// Whether two names are one game's: the same once a trailing edition is dropped, as "Mafia III" and "Mafia III:
+/// Definitive Edition" are; never "Mafia" or "Mafia II" for those.
+pub fn alike(a: &str, b: &str) -> bool {
+    let (a, b) = (game_words(a), game_words(b));
+    !a.is_empty() && a == b
+}
+
+/// A name's words without its trailing edition words; all of them when nothing else is left.
+fn game_words(name: &str) -> Vec<String> {
+    let mut words: Vec<String> = plain(name).split_whitespace().map(str::to_owned).collect();
+    let edition = words.iter().rev().take_while(|word| EDITION_WORDS.contains(&word.as_str())).count();
+    if edition < words.len() {
+        words.truncate(words.len() - edition);
+    }
+    words
+}
+
+/// Letters, digits and spaces, in lower case.
+fn plain(text: &str) -> String {
+    text.chars().filter(|c| c.is_alphanumeric() || c.is_whitespace()).collect::<String>().to_lowercase()
 }
 
 #[cfg(test)]
@@ -93,5 +146,14 @@ mod tests {
             .map(|at| titles[at].id.id().to_owned())
             .collect();
         assert_eq!(order, ["c", "b", "d", "a"]);
+    }
+
+    #[test]
+    fn names_are_alike_when_they_are_the_same_but_for_a_trailing_edition() {
+        assert!(alike("MAFIA III", "Mafia III: Definitive Edition") && alike("Mafia III: Definitive Edition", "mafia iii"));
+        assert!(alike("The Witcher 3: Wild Hunt", "The Witcher 3: Wild Hunt - Game of the Year Edition"));
+        assert!(!alike("Mafia", "Mafia III: Definitive Edition") && !alike("Mafia III", "Mafia II") && !alike("Doom", "Doom Eternal"));
+        assert!(!alike("Dreadmoor", "007 First Light") && !alike("Rage", "Courage"));
+        assert!(!alike("", "Dreadmoor") && !alike("Edition", "Mafia III: Definitive Edition"));
     }
 }
