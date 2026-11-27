@@ -19,16 +19,13 @@ use model::{Glyph, Map, Point, Tiles};
 use super::{
     Stage, Walk,
     camera::{Camera, Pixel, extent},
-    marks::mark_order,
+    marks::{drawn_at, mark_order},
     pins::{self, GROUP_RADIUS},
     tiles::{BACKDROP, Key, STAND_INS},
 };
 use crate::{
     Load,
-    map::{
-        board::plane,
-        markers::{GroupIcon, Look, Marker, PICTURE, SIZE, TIP, ink},
-    },
+    map::markers::{GroupIcon, Look, Marker, PICTURE, SIZE, TIP, ink},
     ui::{
         art::{self, Router},
         assets::Icon,
@@ -204,11 +201,11 @@ impl Stage {
                 let tip = camera.to_view(map.pins[pin].at, area);
                 self.paint_marker(&shot, pin, tip, window, cx);
             }
-            let open = shot.mark.as_deref();
-            self.paint_marks(saved, open, &camera, window, cx);
+            let (open, moving) = (shot.mark.as_deref(), self.moving(&camera));
+            self.paint_marks(saved, open, moving.as_ref(), &camera, window, cx);
             let pins =
                 markers.iter().filter(|marker| marker.count == 1).filter_map(|marker| Some((marker.at, map.pins[marker.pin].position?)));
-            let marks = mark_order(saved, open).filter_map(|mark| Some((plane(mark.at), mark.position?)));
+            let marks = mark_order(saved, open).filter_map(|mark| Some((drawn_at(mark, moving.as_ref()), mark.position?)));
             self.paint_rises(&map, pins.chain(marks), &camera, window, cx);
 
             // Over the pins, as place names are on a map.

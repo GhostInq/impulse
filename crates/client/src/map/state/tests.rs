@@ -1,6 +1,6 @@
 use std::{fs, path::PathBuf};
 
-use model::{Category, Group, Text, Tiles};
+use model::{Category, Group, Pin, Text, Tiles};
 use serde_json::json;
 
 use super::*;
@@ -145,5 +145,43 @@ fn an_older_file_not_taken_over_shows_from_memory_and_nothing_is_written() {
     locked.toggle_found("y");
     locked.flush();
     assert!(!paths.map_files(&id("locked")).dir().exists());
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn a_copy_hides_its_original_and_a_move_keeps_the_height() {
+    let (dir, paths) = data("copy");
+    let mut saved = Saved::load(&paths, &id("m"), &map());
+    let pin = |id: &str| Pin {
+        id: id.to_owned(),
+        at: Point { x: 0.25, y: 0.5 },
+        name: "Chest".to_owned(),
+        description: "gold".to_owned(),
+        group: (0, 0),
+        image: None,
+        video: None,
+        // Up is the game's y here.
+        position: Some([10., 7., 20.]),
+        level: None,
+    };
+    let map = Map { pins: vec![pin("chest"), pin("gone"), pin("tree")], ..map() };
+    let copy = saved.clone_pin(&map.pins[0], 0xFF0000);
+    saved.toggle_hidden("gone");
+    saved.toggle_found("chest");
+    assert_eq!(saved.tally(&map), [[Tally { found: 1, total: 2 }]], "the copied one counts, the hidden one not");
+    assert_eq!(saved.found_of(saved.pin(&copy).unwrap()), Some(true));
+    let pin = saved.pin(&copy).unwrap();
+    assert_eq!((pin.name.as_str(), pin.description.as_str(), pin.color, pin.stands_for()), ("Chest", "gold", 0xFF0000, Some("chest")));
+
+    let frame = Frame { axes: [0, 2, 1], origin: Point { x: 0., y: 0. }, scale: (0.025, 0.025) };
+    saved.move_pin(&copy, Point { x: 0.5, y: 0.75 }, Some(&frame));
+    assert_eq!(saved.pin(&copy).unwrap().position, Some([20., 7., 30.]));
+    saved.move_pin(&copy, Point { x: 0.1, y: 0.1 }, None);
+    assert_eq!((saved.pin(&copy).unwrap().at, saved.pin(&copy).unwrap().position), ((0.1, 0.1), None));
+    saved.flush();
+    let mut back = Saved::load(&paths, &id("m"), &map);
+    assert!(back.hidden("chest") && back.hidden("gone") && back.pin(&copy).unwrap().stands_for() == Some("chest"));
+    back.delete_pin(&copy);
+    assert_eq!(back.tally(&map), [[Tally { found: 0, total: 1 }]], "with its copy gone, the original stays hidden");
     fs::remove_dir_all(dir).unwrap();
 }

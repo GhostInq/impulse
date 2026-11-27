@@ -9,7 +9,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use model::{Map, Point, Ref, Region, TileSet};
+use model::{Frame, Map, Pin, Point, Ref, Region, TileSet};
 // Looked up per drawn pin each frame.
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use serde::{Deserialize, Serialize};
@@ -65,6 +65,8 @@ pub struct View {
 struct Progress {
     /// The map's pins by id.
     found: HashMap<String, Flag>,
+    /// The map's pins the user hid (gone from the game, or moved to a copy), by id.
+    hidden: HashMap<String, Flag>,
 }
 
 /// A yes or no that merges: the later `updated` wins.
@@ -101,6 +103,8 @@ pub struct UserPin {
     #[serde(default)]
     pub description: String,
     pub color: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<Origin>,
     /// `stamp`s: the order pins show in, and which copy of a pin wins.
     #[serde(default)]
     pub created: u64,
@@ -108,6 +112,44 @@ pub struct UserPin {
     pub updated: u64,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleted: bool,
+}
+
+/// A group's pins as counted, and those found.
+#[derive(Clone, Copy, Default, PartialEq, Debug)]
+pub struct Tally {
+    pub found: usize,
+    pub total: usize,
+}
+
+impl<'a> std::iter::Sum<&'a Tally> for Tally {
+    fn sum<I: Iterator<Item = &'a Tally>>(tallies: I) -> Self {
+        tallies.fold(Self::default(), |sum, tally| Self { found: sum.found + tally.found, total: sum.total + tally.total })
+    }
+}
+
+/// Where a user's pin came from, when not made by hand.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Origin {
+    /// A copy of the map's pin of this id, which it stands in for: that one is hidden and found through this one.
+    Clone(String),
+}
+
+impl UserPin {
+    fn new(at: Point, position: Option<[f64; 3]>, color: u32) -> Self {
+        let now = stamp(0);
+        let id = storage::random_hex::<16>().into();
+        let (name, description) = (String::new(), String::new());
+        Self { id, at: (at.x, at.y), position, name, description, color, origin: None, created: now, updated: now, deleted: false }
+    }
+
+    /// The map's pin this one stands in for.
+    pub fn stands_for(&self) -> Option<&str> {
+        match &self.origin {
+            Some(Origin::Clone(id)) => Some(id),
+            None => None,
+        }
+    }
 }
 
 impl Default for View {
@@ -223,8 +265,34 @@ impl Saved {
     }
 
     pub fn toggle_found(&mut self, id: &str) {
-        let flag = self.progress.get_mut().found.entry(id.to_owned()).or_default();
-        (flag.on, flag.updated) = (!flag.on, stamp(flag.updated));
+        flip(&mut self.progress.get_mut().found, id);
+    }
+
+    /// Whether the map's pin `id` is hidden.
+    pub fn hidden(&self, id: &str) -> bool {
+        self.progress.hidden.get(id).is_some_and(|flag| flag.on)
+    }
+
+    pub fn toggle_hidden(&mut self, id: &str) {
+        flip(&mut self.progress.get_mut().hidden, id);
+    }
+
+    /// A copy's FOUND, its original's; `None` for a pin made by hand.
+    pub fn found_of(&self, pin: &UserPin) -> Option<bool> {
+        pin.stands_for().map(|id| self.found(id))
+    }
+
+    /// `map`'s tallies by category and group. A hidden pin counts only while a copy stands in for it: its place is
+    /// gone otherwise.
+    pub fn tally(&self, map: &Map) -> Vec<Vec<Tally>> {
+        let copied: HashSet<&str> = self.pins().filter_map(UserPin::stands_for).collect();
+        let mut tally: Vec<Vec<Tally>> = map.categories.iter().map(|category| vec![Tally::default(); category.groups.len()]).collect();
+        for pin in map.pins.iter().filter(|pin| !self.hidden(&pin.id) || copied.contains(pin.id.as_str())) {
+            let group = &mut tally[pin.group.0][pin.group.1];
+            group.total += 1;
+            group.found += usize::from(self.found(&pin.id));
+        }
+        tally
     }
 
     /// The user's pins, oldest first.
@@ -238,24 +306,34 @@ impl Saved {
 
     /// A pin of the user's at `at`, of the player's game `position` if given, shown with the rest; its id.
     pub fn add_pin(&mut self, at: Point, position: Option<[f64; 3]>) -> Rc<str> {
-        let (color, now) = (PALETTE[self.pins().count() % PALETTE.len()], stamp(0));
-        let id: Rc<str> = storage::random_hex::<16>().into();
-        let pin = UserPin {
-            id: id.clone(),
-            at: (at.x, at.y),
-            position,
-            name: String::new(),
-            description: String::new(),
-            color,
-            created: now,
-            updated: now,
-            deleted: false,
-        };
+        let color = PALETTE[self.pins().count() % PALETTE.len()];
+        self.push(UserPin::new(at, position, color))
+    }
+
+    /// The map's `pin` as one of the user's, standing in for it: the original hides. Its id.
+    pub fn clone_pin(&mut self, pin: &Pin, color: u32) -> Rc<str> {
+        let (name, description, origin) = (pin.name.clone(), pin.description.clone(), Some(Origin::Clone(pin.id.clone())));
+        if !self.hidden(&pin.id) {
+            self.toggle_hidden(&pin.id);
+        }
+        self.push(UserPin { name, description, origin, ..UserPin::new(pin.at, pin.position, color) })
+    }
+
+    fn push(&mut self, pin: UserPin) -> Rc<str> {
+        let id = pin.id.clone();
         self.mine.get_mut().pins.push(pin);
         if !self.view.pins_shown() {
             self.view.get_mut().toggle_pins();
         }
         id
+    }
+
+    /// Moves pin `id` to `at` on the plane: its game position keeps its height, and needs `frame` for the rest.
+    pub fn move_pin(&mut self, id: &str, at: Point, frame: Option<&Frame>) {
+        self.touch(id, |pin| {
+            pin.at = (at.x, at.y);
+            pin.position = pin.position.zip(frame).map(|(position, frame)| frame.to_game(at, frame.height(position)));
+        });
     }
 
     pub fn edit_pin(&mut self, id: &str, edit: PinEdit) {
@@ -276,6 +354,11 @@ impl Saved {
             pin.updated = stamp(pin.updated);
         }
     }
+}
+
+fn flip(flags: &mut HashMap<String, Flag>, id: &str) {
+    let flag = flags.entry(id.to_owned()).or_default();
+    (flag.on, flag.updated) = (!flag.on, stamp(flag.updated));
 }
 
 /// Now in milliseconds, and past `previous`: an edit wins over what it changed even when the clock went back.

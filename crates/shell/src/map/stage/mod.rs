@@ -42,6 +42,16 @@ use tiles::Tiles;
 struct Drag {
     last: gpui_kit::Point<Pixels>,
     moved: bool,
+    // Alt on one of the user's pins: it moves, not the map.
+    moving: Option<Moving>,
+}
+
+/// A pin of the user's on its way: its tip keeps its offset from the cursor on the view, under a moving camera too.
+struct Moving {
+    id: Rc<str>,
+    // On the window: the stage may move under it.
+    cursor: gpui_kit::Point<Pixels>,
+    grab: Pixel,
 }
 
 /// What was worked out from the shown map's pins or points at them: forgotten with the map.
@@ -218,7 +228,8 @@ impl Stage {
             self.drop_tiles();
         }
         self.stale.extend(self.images.clear());
-        (self.shown, self.glide, self.clock) = (Shown::of(map), None, None);
+        // A gesture begun on another map ends with it.
+        (self.shown, self.glide, self.clock, self.drag) = (Shown::of(map), None, None, None);
         if first {
             self.camera = board.saved.view().camera.map(|(x, y, span)| Camera { center: Point { x, y }, span });
         }

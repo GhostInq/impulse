@@ -10,7 +10,7 @@ use anyhow::Result;
 use client::{
     map::{
         heading::Bearing,
-        state::{Saved, View},
+        state::{Saved, Tally, View},
     },
     storage::Paths,
 };
@@ -60,8 +60,8 @@ pub struct Board {
     // Shared so a frame can hold it while it paints.
     pub saved: Rc<Saved>,
     // Pins per category and group: all of them and the found ones.
-    pub counts: Vec<Vec<usize>>,
-    pub found_counts: Vec<Vec<usize>>,
+    /// By category and group (`Saved::tally`).
+    pub tally: Vec<Vec<Tally>>,
     // Each pin's name, group, category and description, lowercased; made on the map's first search.
     haystacks: Vec<String>,
     query: String,
@@ -113,8 +113,7 @@ impl Board {
             art,
             settled: false,
             saved: Rc::default(),
-            counts: Vec::new(),
-            found_counts: Vec::new(),
+            tally: Vec::new(),
             haystacks: Vec::new(),
             query: String::new(),
             selected: None,
@@ -192,10 +191,6 @@ impl Board {
         // Titles an older build saved turn into ids once a copy names them.
         if !self.saved.view().hidden_labels.is_empty() {
             self.saved_mut().view_mut().resolve(&map.regions);
-        }
-        self.counts = map.categories.iter().map(|category| vec![0; category.groups.len()]).collect();
-        for pin in &map.pins {
-            self.counts[pin.group.0][pin.group.1] += 1;
         }
         (self.map, self.selected, self.mark, self.haystacks) = (Load::Ready(map), None, None, Vec::new());
         self.index();
@@ -280,23 +275,25 @@ impl Board {
     pub fn toggle_found(&mut self, pin: usize, cx: &mut Context<Self>) {
         let Load::Ready(map) = &self.map else { return };
         let id = map.pins[pin].id.clone();
-        self.saved_mut().toggle_found(&id);
+        self.toggle_found_id(&id, cx);
+    }
+
+    fn toggle_found_id(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.saved_mut().toggle_found(id);
         self.recount();
         self.filtered(cx);
     }
 
     fn recount(&mut self) {
-        let Load::Ready(map) = &self.map else { return };
-        self.found_counts = self.counts.iter().map(|groups| vec![0; groups.len()]).collect();
-        for pin in map.pins.iter().filter(|pin| self.saved.found(&pin.id)) {
-            self.found_counts[pin.group.0][pin.group.1] += 1;
+        if let Load::Ready(map) = &self.map {
+            self.tally = self.saved.tally(map);
         }
     }
 
-    /// Whether pin `index` shows; a search reaches hidden groups too.
+    /// Whether pin `index` shows; a search reaches hidden groups too, never a hidden pin.
     pub fn shows(&self, map: &Map, index: usize) -> bool {
         let (pin, view) = (&map.pins[index], self.saved.view());
-        if view.unfound_only && self.saved.found(&pin.id) || view.teleport_only && pin.position.is_none() {
+        if self.saved.hidden(&pin.id) || view.unfound_only && self.saved.found(&pin.id) || view.teleport_only && pin.position.is_none() {
             return false;
         }
         if self.query.is_empty() { !view.hidden_groups.contains(&group(map, pin).id) } else { self.haystacks[index].contains(&self.query) }
@@ -358,8 +355,7 @@ impl Board {
     /// Lets go of the map, closed for a while; the user's state of it was saved when it closed.
     pub fn forget(&mut self) {
         (self.id, self.locale, self.map, self.icons, self.selected, self.mark) = (None, None, Load::Pending, None, None, None);
-        (self.settled, self.saved, self.counts, self.found_counts, self.haystacks) =
-            (false, Rc::default(), Vec::new(), Vec::new(), Vec::new());
+        (self.settled, self.saved, self.tally, self.haystacks) = (false, Rc::default(), Vec::new(), Vec::new());
     }
 
     pub fn set_open(&mut self, open: bool, cx: &mut Context<Self>) {

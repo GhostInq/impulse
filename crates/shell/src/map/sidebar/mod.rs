@@ -1,12 +1,14 @@
-//! Left of the map: the search, progress, quick filters, the user's pins, regions, the categories and their groups;
+//! Left of the map: the search, progress, quick filters, the user's pins, the hidden ones, regions, the categories and
+//! their groups;
 //! while something is typed, the places it finds. A view of its own: what moves on the map does not rebuild it.
 
+mod hidden;
 mod marks;
 mod teleport;
 
 use std::{collections::HashSet, rc::Rc, sync::Arc};
 
-use client::map::state::View;
+use client::map::state::{Tally, View};
 use gpui_kit::{
     AnyElement, App, Context, Div, ElementId, Entity, Focusable, FontWeight, IntoElement, MouseButton, Render, RenderImage, SharedString,
     Stateful, Subscription, Window,
@@ -55,6 +57,7 @@ pub struct Sidebar {
     folded: HashSet<usize>,
     regions_open: bool,
     marks_open: bool,
+    hidden_open: bool,
     // What the search finds, names first; dropped when what shows changes.
     matches: Option<Rc<[usize]>>,
     images: Images,
@@ -100,6 +103,7 @@ impl Sidebar {
             folded: HashSet::new(),
             regions_open: false,
             marks_open: true,
+            hidden_open: false,
             matches: None,
             images: Images::default(),
             stale: Vec::new(),
@@ -123,7 +127,7 @@ impl Sidebar {
     }
 
     fn filters(&mut self, map: &Map, board: &Board, window: &Window, cx: &Context<Self>) -> Vec<AnyElement> {
-        let mut rows = vec![progress(map, board, cx).into_any_element()];
+        let mut rows = vec![progress(board, cx).into_any_element()];
         if map.unfinished {
             let notice = h_flex().gap(px(8.)).mx(px(14.)).mb(px(8.)).child(icon(Icon::Warn, 12., rgb(WARN)));
             let text = div().text_size(px(TYPE_SMALL)).text_color(rgb(MUTED)).child(t(cx, key::MAP_UNFINISHED));
@@ -134,6 +138,7 @@ impl Sidebar {
             rows.push(self.lift_row(cx).into_any_element());
         }
         rows.extend(self.marks_section(board, cx));
+        rows.extend(self.hidden_section(map, board, cx));
         rows.extend(self.regions(map, board, cx));
         for index in 0..map.categories.len() {
             rows.extend(self.category(map, board, index, window, cx));
@@ -177,7 +182,7 @@ impl Sidebar {
         let category = &map.categories[index];
         let ids: Vec<String> = category.groups.iter().map(|group| group.id.clone()).collect();
         let shown = ids.iter().any(|id| !board.saved.view().hidden_groups.contains(id));
-        let (found, total): (usize, usize) = (board.found_counts[index].iter().sum(), board.counts[index].iter().sum());
+        let counted: Tally = board.tally[index].iter().sum();
         let open = !self.folded.contains(&index);
         let toggle = cx.listener(move |sidebar, _, _, cx| flip(&sidebar.board, |view| &mut view.hidden_groups, &ids, shown, cx));
         let mark = div().id(("map-category-check", index)).child(check(category.color, shown)).on_click(move |event, window, cx| {
@@ -185,7 +190,7 @@ impl Sidebar {
             toggle(event, window, cx);
         });
         let title = category.name.to_uppercase();
-        let header = section(("map-category", index), open, &title, tally(found, total), Some(mark.into_any_element()), cx).on_click(
+        let header = section(("map-category", index), open, &title, tally(counted), Some(mark.into_any_element()), cx).on_click(
             cx.listener(move |sidebar, _, _, cx| {
                 if !sidebar.folded.remove(&index) {
                     sidebar.folded.insert(index);
@@ -210,7 +215,7 @@ impl Sidebar {
         let color = if shown { legible(category.color) } else { GHOST };
         let glyph = self.images.glyph(board.icon(at, cx), at, color, ICON, window, cx);
         let (toggle_id, only_id) = (group.id.clone(), group.id.clone());
-        let counted = tally(board.found_counts[at.0][at.1], board.counts[at.0][at.1]);
+        let counted = tally(board.tally[at.0][at.1]);
         list_row(("map-group", at.1), false)
             .h(px(32.))
             .px(px(6.))
@@ -315,8 +320,8 @@ impl Render for Sidebar {
     }
 }
 
-fn progress(map: &Map, board: &Board, cx: &App) -> Div {
-    let (found, total) = (board.found_counts.iter().flatten().sum::<usize>(), map.pins.len());
+fn progress(board: &Board, cx: &App) -> Div {
+    let Tally { found, total } = board.tally.iter().flatten().sum();
     let share = if total == 0 { 0. } else { found as f32 / total as f32 };
     v_flex()
         .gap(px(6.))
@@ -381,7 +386,7 @@ fn quick_filters(map: &Map, board: &Board, cx: &Context<Sidebar>) -> impl IntoEl
         )
 }
 
-fn tally(found: usize, total: usize) -> String {
+fn tally(Tally { found, total }: Tally) -> String {
     if found > 0 { format!("{found}/{total}") } else { total.to_string() }
 }
 

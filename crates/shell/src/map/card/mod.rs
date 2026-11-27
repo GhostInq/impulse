@@ -8,8 +8,8 @@ mod pin;
 use std::{mem, path::PathBuf, sync::Arc};
 
 use gpui_kit::{
-    AnyElement, Bounds, ClickEvent, Context, Div, Entity, IntoElement, Pixels, Render, RenderImage, SharedString, Stateful, Subscription,
-    Task, Window, canvas,
+    AnyElement, App, Bounds, ClickEvent, Context, Div, Entity, IntoElement, Pixels, Render, RenderImage, SharedString, Stateful,
+    Subscription, Task, Window, canvas,
     component::{
         h_flex,
         input::{InputState, TextareaState},
@@ -30,10 +30,11 @@ use super::{
 use crate::{
     Load,
     ui::{
+        assets::Icon,
         key,
         text::{Texts, t},
         theme::*,
-        widgets::{choice, segmented},
+        widgets::{button, choice, icon, segmented},
     },
 };
 use clip::ClipView;
@@ -257,4 +258,13 @@ impl Render for Card {
         let pin = self.pin_card(map, board, window, cx);
         root.children(pin).children(self.mark_card(map, board, cx)).children(self.lightbox(map, board, window, cx))
     }
+}
+
+/// MARK FOUND, or FOUND in the accent with a check.
+fn found_button(id: &'static str, found: bool, cx: &App) -> Stateful<Div> {
+    let accent = rgb(accent(cx));
+    button(&t(cx, if found { key::MAP_FOUND } else { key::MAP_MARK_FOUND }))
+        .id(id)
+        .flex_1()
+        .when(found, |button| button.border_color(accent).text_color(accent).child(icon(Icon::Check, 11., accent)))
 }

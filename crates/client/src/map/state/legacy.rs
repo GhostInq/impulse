@@ -89,7 +89,11 @@ fn parts(Old { mut view, found, marks, marks_shown }: Old) -> Parts {
     }
     // Stamped 0: any edit since wins over them.
     let found = found.into_iter().map(|id| (id, Flag { on: true, updated: 0 })).collect();
-    Parts { view, progress: Progress { found }, mine: Preset { pins: marks.into_iter().enumerate().map(pin).collect() } }
+    Parts {
+        view,
+        progress: Progress { found, ..Progress::default() },
+        mine: Preset { pins: marks.into_iter().enumerate().map(pin).collect() },
+    }
 }
 
 /// Its id comes from what it holds, so one older file gives the same ids wherever it is taken over; `created`
@@ -98,7 +102,7 @@ fn pin((index, mark): (usize, Mark)) -> UserPin {
     let digest = Sha256::digest(serde_json::to_vec(&(index, &mark)).unwrap_or_default());
     let Mark { at, position, name, note, color } = mark;
     let id = storage::hex(&digest[..16]).into();
-    UserPin { id, at, position, name, description: note, color, created: index as u64, updated: 0, deleted: false }
+    UserPin { id, at, position, name, description: note, color, origin: None, created: index as u64, updated: 0, deleted: false }
 }
 
 fn file(map_state: &Path, id: &Ref) -> PathBuf {

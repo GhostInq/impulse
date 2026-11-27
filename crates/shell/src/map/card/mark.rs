@@ -13,7 +13,7 @@ use gpui_kit::{
 };
 use model::Map;
 
-use super::Card;
+use super::{Card, found_button};
 use crate::{
     map::board::Board,
     ui::{
@@ -88,6 +88,12 @@ impl Card {
                 .flex_1()
                 .on_click(cx.listener(move |card, _, _, cx| card.board.update(cx, |board, cx| board.teleport_to_mark(&id, cx))))
         });
+        // A copy of a map's pin carries its FOUND.
+        let found = board.saved.found_of(mark).map(|found| {
+            let id = id.clone();
+            found_button("mark-found", found, cx)
+                .on_click(cx.listener(move |card, _, _, cx| card.board.update(cx, |board, cx| board.toggle_mark_found(&id, cx))))
+        });
         let delete = button(&t(cx, key::MAP_DELETE))
             .id("mark-delete")
             .flex_1()
@@ -108,7 +114,8 @@ impl Card {
             .child(field().font_weight(FontWeight::BOLD).child(Input::new(&self.mark_name).appearance(false).px_0()))
             .child(field().child(Textarea::new(&self.mark_note).appearance(false)))
             .child(h_flex().gap(px(8.)).children(swatches))
-            .child(h_flex().gap(px(8.)).children(teleport).child(delete));
+            .child(h_flex().gap(px(8.)).children(found).children(teleport).child(delete))
+            .child(mono(t(cx, key::MAP_PIN_DRAG), TYPE_TAG).text_color(rgb(FAINT)));
         Some(card.into_any_element())
     }
 }
