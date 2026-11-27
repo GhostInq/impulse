@@ -35,6 +35,7 @@ const CATALOG: &str = "catalog";
 const TRAINERS: &str = "trainers";
 const TRAINER_FILES: &str = "trainer-files";
 const BRIDGE: &str = "bridge";
+const WEMOD: &str = "wemod.com";
 
 pub struct Wand {
     data_dir: PathBuf,
@@ -58,6 +59,8 @@ impl Wand {
 
     /// Starts the browser bridge at once: it takes a moment to come up.
     pub fn new(data_dir: PathBuf) -> Self {
+        // On some networks WeMod's edge turns away a client that names itself otherwise.
+        fetch::name_as(WEMOD, crate::install::user_agent());
         let transport = Transport::spawn(data_dir.clone()).map_err(|e| {
             log::error!("Transport: {e:#}");
             Failure::from(e)

@@ -63,7 +63,6 @@ pub(super) fn run(data_dir: &Path, started: SyncSender<EventLoopProxy<Cmd>>) {
     // while Impulse is in front.
     event_loop.set_device_event_filter(DeviceEventFilter::Always);
     let data_dir = data_dir.to_owned();
-    let wand = install::installs().first().map_or_else(|| "Wand".to_owned(), |install| format!("Wand/{}", install.label()));
 
     let mut bridge: Option<Bridge> = None;
     let (mut ready, mut queue, mut next_id, mut last) = (false, Vec::new(), 0u64, Instant::now());
@@ -72,7 +71,7 @@ pub(super) fn run(data_dir: &Path, started: SyncSender<EventLoopProxy<Cmd>>) {
             Event::UserEvent(Cmd::Ready) => ready = true,
             Event::UserEvent(Cmd::Fetch(request, tx)) => {
                 let new = bridge.is_none();
-                let built = bridge.take().map_or_else(|| build_retrying(&data_dir, &wand, target, proxy.clone(), pending.clone()), Ok);
+                let built = bridge.take().map_or_else(|| build_retrying(&data_dir, target, proxy.clone(), pending.clone()), Ok);
                 // After the build, as its retries can outlast the idle time; a page still loading keeps its deadline.
                 if new || ready {
                     last = Instant::now();
@@ -123,18 +122,12 @@ pub(super) fn run(data_dir: &Path, started: SyncSender<EventLoopProxy<Cmd>>) {
 }
 
 // After some hard kills WebView2 keeps the profile busy for about 50 s; a clean exit frees it at once.
-fn build_retrying(
-    data_dir: &Path,
-    wand: &str,
-    target: &EventLoopWindowTarget<Cmd>,
-    proxy: EventLoopProxy<Cmd>,
-    pending: Pending,
-) -> Result<Bridge> {
+fn build_retrying(data_dir: &Path, target: &EventLoopWindowTarget<Cmd>, proxy: EventLoopProxy<Cmd>, pending: Pending) -> Result<Bridge> {
     const ERROR_BUSY: i32 = 0x800700AA_u32 as i32;
     let deadline = Instant::now() + Duration::from_secs(90);
     let mut busy = false;
     loop {
-        match build(data_dir, wand, target, proxy.clone(), pending.clone()) {
+        match build(data_dir, target, proxy.clone(), pending.clone()) {
             Err(e)
                 if Instant::now() < deadline
                     && matches!(e.downcast_ref(), Some(wry::Error::WebView2Error(WindowsError(w))) if w.code().0 == ERROR_BUSY) =>
@@ -157,7 +150,7 @@ fn build_retrying(
 }
 
 // COM: WebViewBuilder::build runs CoInitializeEx(STA) on this thread, and tao skips OLE with drag and drop off.
-fn build(data_dir: &Path, wand: &str, target: &EventLoopWindowTarget<Cmd>, proxy: EventLoopProxy<Cmd>, pending: Pending) -> Result<Bridge> {
+fn build(data_dir: &Path, target: &EventLoopWindowTarget<Cmd>, proxy: EventLoopProxy<Cmd>, pending: Pending) -> Result<Bridge> {
     // Written for each build: a page removed since the last one would never load.
     std::fs::write(data_dir.join("bridge.html"), BRIDGE)?;
     let window = WindowBuilder::new().with_visible(false).with_drag_and_drop(false).build(target)?;
@@ -176,20 +169,20 @@ fn build(data_dir: &Path, wand: &str, target: &EventLoopWindowTarget<Cmd>, proxy
         })
         .with_additional_browser_args(BROWSER_ARGS)
         .build(&window)?;
-    if let Err(e) = name_wand(&webview, wand) {
+    if let Err(e) = name_wand(&webview) {
         log::warn!("bridge User-Agent not set, signing in may fail: {e}");
     }
     webview.load_url(url.as_str())?;
     Ok((webview, context, window))
 }
 
-fn name_wand(webview: &WebView, wand: &str) -> windows::core::Result<()> {
+fn name_wand(webview: &WebView) -> windows::core::Result<()> {
     // SAFETY: the WebView was built on this thread and outlives the call.
     let settings = unsafe { webview.webview().Settings() }?.cast::<ICoreWebView2Settings2>()?;
     let mut agent = PWSTR::null();
     // SAFETY: WebView2 allocates the string, `take_pwstr` frees it.
     unsafe { settings.UserAgent(&mut agent) }?;
-    let agent = HSTRING::from(format!("{} {wand}", take_pwstr(agent)));
+    let agent = HSTRING::from(format!("{} {}", take_pwstr(agent), install::user_agent()));
     // SAFETY: as for `Settings`.
     unsafe { settings.SetUserAgent(&agent) }
 }
