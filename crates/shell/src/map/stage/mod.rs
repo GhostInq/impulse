@@ -7,6 +7,7 @@ mod motion;
 mod overlays;
 mod paint;
 mod pins;
+mod rise;
 mod tiles;
 
 use crate::ui::{
@@ -47,10 +48,12 @@ struct Drag {
 struct Shown {
     // By the zoom step they were grouped for.
     markers: Option<(i32, Rc<Vec<Marker>>)>,
-    // Made once, not per frame: each label's line, each region ring's extent (a frame skips those off the view), group counts.
+    // Made once, not per frame: each label's line, each region ring's extent (a frame skips those off the view), group
+    // counts, rises.
     labels: Vec<SharedString>,
     regions: Vec<Vec<Option<(Point, Point)>>>,
     counts: HashMap<usize, SharedString>,
+    rises: HashMap<i64, SharedString>,
     hovered: Option<usize>,
     // The hovered pin once the cursor has rested on it.
     chip: Option<usize>,

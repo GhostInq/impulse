@@ -30,6 +30,10 @@ pub struct Saved {
     pub labels: bool,
     pub regions: bool,
     pub clusters: bool,
+    /// The minimap groups close pins too, while `clusters`.
+    pub mini_clusters: bool,
+    /// How far above or below the player near pins are.
+    pub rises: bool,
     /// Camera center and span.
     pub view: Option<(f64, f64, f64)>,
     pub marks: Vec<Mark>,
@@ -64,6 +68,8 @@ impl Default for Saved {
             labels: true,
             regions: true,
             clusters: true,
+            mini_clusters: false,
+            rises: true,
             view: None,
             marks: Vec::new(),
             marks_shown: true,

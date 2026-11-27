@@ -198,6 +198,10 @@ impl Stage {
                 let marker = Marker { group: None, fill: saved.marks[index].color, look, found: false, level: None, picture: false };
                 self.paint_look(marker, None, camera.to_view(plane(saved.marks[index].at), area), window, cx);
             }
+            let pins =
+                markers.iter().filter(|marker| marker.count == 1).filter_map(|marker| Some((marker.at, map.pins[marker.pin].position?)));
+            let marks = mark_order(saved, shot.mark).filter_map(|index| Some((plane(saved.marks[index].at), saved.marks[index].position?)));
+            self.paint_rises(&map, pins.chain(marks), &camera, window, cx);
 
             // Over the pins, as place names are on a map.
             for (label, line) in map.labels.iter().zip(&self.shown.labels).filter(|(label, _)| saved.labels && shows(label.zoom)) {
@@ -232,7 +236,8 @@ impl Stage {
         let span = 2f64.powf(step as f64 / 2.);
         let deepest = board.saved.tile_set_of(map).1.tiles.max_zoom;
         let close = span >= self.tile * 2f64.powi(deepest.into()) * 0.9;
-        let markers = Rc::new(pins::markers(&map.pins, |index| board.shows(map, index), span, close || !board.saved.clusters));
+        let clusters = board.saved.clusters && (self.live.is_none() || board.saved.mini_clusters);
+        let markers = Rc::new(pins::markers(&map.pins, |index| board.shows(map, index), span, close || !clusters));
         self.shown.markers = Some((step, markers.clone()));
         markers
     }
@@ -421,7 +426,15 @@ fn path(corners: &[gpui_kit::Point<Pixels>], mut builder: PathBuilder) -> Option
 }
 
 /// One line centered on `at`, unless it is off the view; a shadow keeps it readable on any tile.
-fn text(text: SharedString, height: f32, color: u32, shadow: bool, at: gpui_kit::Point<Pixels>, window: &mut Window, cx: &mut App) {
+pub(super) fn text(
+    text: SharedString,
+    height: f32,
+    color: u32,
+    shadow: bool,
+    at: gpui_kit::Point<Pixels>,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let line_height = px(height * 1.3);
     // GPUI keeps shapes between frames, and a shape does not hold its color: the shadow's costs a lookup.
     let family = ui_font(cx);

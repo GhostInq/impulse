@@ -140,7 +140,7 @@ impl Stage {
             .bottom(px(MARGIN))
             .items_end()
             .gap(px(8.))
-            .when(self.layers_open, |row| row.child(layers_menu(map, &board.saved, cx)))
+            .when(self.layers_open, |row| row.child(layers_menu(map, board, cx)))
             .child(v_flex().gap(px(8.)).children(locate).child(v_flex().child(zoom_in).child(zoom_out.border_t_0())).child(layers))
     }
 
@@ -170,9 +170,10 @@ impl Stage {
     }
 }
 
-/// The map's tile sets, when it has more than one, then its layers.
-fn layers_menu(map: &Map, saved: &Saved, cx: &Context<Stage>) -> impl IntoElement {
-    let accent = accent(cx);
+/// The map's tile sets, when it has more than one, then its layers: grouping on the minimap for a map it shows, the
+/// rises while the player's height is told.
+fn layers_menu(map: &Map, board: &Board, cx: &Context<Stage>) -> impl IntoElement {
+    let (accent, saved) = (accent(cx), &board.saved);
     let option = |id: (&'static str, usize), label: SharedString, on: bool| {
         list_row(id, false)
             .h(px(28.))
@@ -209,6 +210,12 @@ fn layers_menu(map: &Map, saved: &Saved, cx: &Context<Stage>) -> impl IntoElemen
             menu.child(layer(1, t(cx, key::MAP_LAYER_REGIONS), saved.regions, |saved| saved.regions ^= true))
         })
         .child(layer(2, t(cx, key::MAP_LAYER_CLUSTERS), saved.clusters, |saved| saved.clusters ^= true))
+        .when(saved.clusters && map.frame.is_some(), |menu| {
+            // Under its square: a choice within the one above.
+            let mini = layer(3, t(cx, key::MAP_LAYER_MINI_CLUSTERS), saved.mini_clusters, |saved| saved.mini_clusters ^= true);
+            menu.child(mini.pl(px(31.)))
+        })
+        .when(board.here, |menu| menu.child(layer(4, t(cx, key::MAP_LAYER_RISES), saved.rises, |saved| saved.rises ^= true)))
 }
 
 /// A square map button; `on` lights it in the accent.
