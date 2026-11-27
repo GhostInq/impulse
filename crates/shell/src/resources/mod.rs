@@ -84,7 +84,7 @@ impl Resources {
                     Store { id: store_ref(media), name, hint, bytes: disk::size(&media.dir(&paths)), clear: Clear::Now }
                 });
                 let logs = journal::dir().map_or(0, disk::size);
-                let progress = disk::size(&paths.map_state()) + disk::size(&paths.map_data());
+                let progress = [paths.map_state(), paths.map_data(), paths.map_media()].iter().map(|dir| disk::size(dir)).sum();
                 (media, progress, disk::size(&paths.hotkeys()), logs)
             });
             let ((media, progress, hotkeys, logs), provided) = (own.await, stores.await);

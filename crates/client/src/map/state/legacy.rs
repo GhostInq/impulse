@@ -102,7 +102,8 @@ fn pin((index, mark): (usize, Mark)) -> UserPin {
     let digest = Sha256::digest(serde_json::to_vec(&(index, &mark)).unwrap_or_default());
     let Mark { at, position, name, note, color } = mark;
     let id = storage::hex(&digest[..16]).into();
-    UserPin { id, at, position, name, description: note, color, origin: None, created: index as u64, updated: 0, deleted: false }
+    let (media, origin) = (Vec::new(), None);
+    UserPin { id, at, position, name, description: note, color, media, origin, created: index as u64, updated: 0, deleted: false }
 }
 
 fn file(map_state: &Path, id: &Ref) -> PathBuf {

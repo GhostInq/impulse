@@ -51,6 +51,7 @@ pub const MAP_PHOTO: Key = Key("map-photo");
 pub const MAP_PIN_HIDE: Key = Key("map-pin-hide");
 pub const MAP_PIN_UNHIDE: Key = Key("map-pin-unhide");
 pub const MAP_PIN_MOVE: Key = Key("map-pin-move");
+pub const MAP_ADD_MEDIA: Key = Key("map-add-media");
 pub const MAP_HIDDEN_PINS: Key = Key("map-hidden-pins");
 pub const MAP_PIN_DRAG: Key = Key("map-pin-drag");
 pub const MAP_LAYER_LABELS: Key = Key("map-layer-labels");

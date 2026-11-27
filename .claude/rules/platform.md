@@ -39,7 +39,7 @@ Small Windows and I/O crates with no dependency on our other crates but `model` 
 - Messages are flattened to one line and the profile path is scrubbed.
 
 ## disk
-- `replace(path, data)`: how every app file is written (temp file, rename). `size(path)`: a file's or folder's bytes, blocking.
+- `replace(path, data)`: how every app file is written (temp file, rename); `stage(dir)` for one written as a stream or named only once written (`Staged`: `publish`, removed if dropped or not published). `size(path)`: a file's or folder's bytes, blocking.
 - `Stored<T>`: a typed JSON file (`client`'s and `plugins`' alike; `client::storage` re-exports it): missing means the defaults, not JSON moves aside, an object carries `VERSION` and one of another version is never written. `edit` logs a failed save and keeps the change; `get_mut` changes it now and `flush` saves it if changed; `try_edit` (`T: Clone`) saves a copy first, publishes it only when saved, and errors on a store that does not save. The default has no file and never saves. `read` for a file kept by hand.
 
 ## fetch

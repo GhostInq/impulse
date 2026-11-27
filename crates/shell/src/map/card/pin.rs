@@ -100,7 +100,7 @@ impl Card {
                 .flex_none()
                 .cursor_pointer()
                 .bg(rgb(SUNKEN))
-                .child(picture(index, under, preview.into_iter().chain(clip), (CARD_WIDTH - 2., PICTURE)))
+                .child(picture(("pin-pictures", index), under, preview.into_iter().chain(clip), (CARD_WIDTH - 2., PICTURE)))
                 .on_click(cx.listener(|card, _, _, cx| {
                     (card.lightbox, card.photo) = (true, false);
                     cx.notify();

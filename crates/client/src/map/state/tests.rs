@@ -176,6 +176,9 @@ fn a_copy_hides_its_original_and_a_move_keeps_the_height() {
     let frame = Frame { axes: [0, 2, 1], origin: Point { x: 0., y: 0. }, scale: (0.025, 0.025) };
     saved.move_pin(&copy, Point { x: 0.5, y: 0.75 }, Some(&frame));
     assert_eq!(saved.pin(&copy).unwrap().position, Some([20., 7., 30.]));
+    saved.place_pin(&copy, [1., 2., 3.], &frame);
+    let placed = frame.to_map([1., 2., 3.]);
+    assert_eq!((saved.pin(&copy).unwrap().at, saved.pin(&copy).unwrap().position), ((placed.x, placed.y), Some([1., 2., 3.])));
     saved.move_pin(&copy, Point { x: 0.1, y: 0.1 }, None);
     assert_eq!((saved.pin(&copy).unwrap().at, saved.pin(&copy).unwrap().position), ((0.1, 0.1), None));
     saved.flush();

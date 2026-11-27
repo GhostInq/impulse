@@ -88,6 +88,9 @@ pub enum PinEdit {
     Name(String),
     Description(String),
     Color(u32),
+    /// A kept `map::media` name, once.
+    AddMedia(String),
+    RemoveMedia(String),
 }
 
 /// A pin of the user's own. One with a game `position` is there and `at` shows it; one without is at `at`.
@@ -103,6 +106,9 @@ pub struct UserPin {
     #[serde(default)]
     pub description: String,
     pub color: u32,
+    /// Its pictures and clips, as `map::media` names them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub media: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<Origin>,
     /// `stamp`s: the order pins show in, and which copy of a pin wins.
@@ -140,7 +146,8 @@ impl UserPin {
         let now = stamp(0);
         let id = storage::random_hex::<16>().into();
         let (name, description) = (String::new(), String::new());
-        Self { id, at: (at.x, at.y), position, name, description, color, origin: None, created: now, updated: now, deleted: false }
+        let (media, origin) = (Vec::new(), None);
+        Self { id, at: (at.x, at.y), position, name, description, color, media, origin, created: now, updated: now, deleted: false }
     }
 
     /// The map's pin this one stands in for.
@@ -328,6 +335,12 @@ impl Saved {
         id
     }
 
+    /// Puts pin `id` at the game `position`: the one way its height changes.
+    pub fn place_pin(&mut self, id: &str, position: [f64; 3], frame: &Frame) {
+        let at = frame.to_map(position);
+        self.touch(id, |pin| (pin.at, pin.position) = ((at.x, at.y), Some(position)));
+    }
+
     /// Moves pin `id` to `at` on the plane: its game position keeps its height, and needs `frame` for the rest.
     pub fn move_pin(&mut self, id: &str, at: Point, frame: Option<&Frame>) {
         self.touch(id, |pin| {
@@ -341,6 +354,9 @@ impl Saved {
             PinEdit::Name(name) => pin.name = name,
             PinEdit::Description(text) => pin.description = text,
             PinEdit::Color(color) => pin.color = color,
+            PinEdit::AddMedia(name) if !pin.media.contains(&name) => pin.media.push(name),
+            PinEdit::AddMedia(_) => {}
+            PinEdit::RemoveMedia(name) => pin.media.retain(|kept| *kept != name),
         });
     }
 

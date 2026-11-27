@@ -74,7 +74,12 @@ impl Stage {
             });
         let preview = pin.image.as_ref().map(|image| {
             let under = stand_in(pin.group, map, board, &mut self.images, window, cx);
-            picture(index, under, [fill(img(image.preview.clone()), ("pin-media", index))], (CHIP_WIDTH - 2., CHIP_PICTURE))
+            picture(
+                ("pin-pictures", index),
+                under,
+                [fill(img(image.preview.clone()), ("pin-media", index))],
+                (CHIP_WIDTH - 2., CHIP_PICTURE),
+            )
         });
         let chip = v_flex()
             .absolute()

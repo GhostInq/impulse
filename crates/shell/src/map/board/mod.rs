@@ -2,6 +2,7 @@
 //! They observe it; it notifies on what a person does (clicks, typing, the player's position), never per frame.
 
 mod marks;
+mod media;
 mod teleport;
 
 use std::{mem, path::PathBuf, rc::Rc, time::Duration};
@@ -17,6 +18,8 @@ use client::{
 use futures::{StreamExt, stream::BoxStream};
 use gpui_kit::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, WeakEntity};
 use model::{Failure, Icon, Locale, Map, Point, Ref, Snapshot};
+
+pub use media::{Attach, Target};
 
 use super::{group, icons::Icons, markers::GroupIcon};
 use crate::{
@@ -39,6 +42,8 @@ pub enum BoardEvent {
     Selected,
     /// The new mark is already open.
     MarkAdded,
+    /// The open mark's place changed: dragged or typed.
+    MarkMoved,
     /// The view should show `to`; `close`: near enough to tell pins apart.
     Bring { to: Point, close: bool },
 }

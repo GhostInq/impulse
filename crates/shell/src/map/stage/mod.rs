@@ -147,7 +147,7 @@ impl Stage {
                 stage.hover(None, cx);
             }
             BoardEvent::Selected => (stage.shown.target, stage.shown.hovered_mark) = (None, None),
-            BoardEvent::MarkAdded => {}
+            BoardEvent::MarkAdded | BoardEvent::MarkMoved => {}
             BoardEvent::Bring { to, close } => {
                 let board = board.read(cx);
                 if let Load::Ready(map) = &board.map {

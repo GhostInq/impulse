@@ -266,6 +266,7 @@ map-hide-group = HIDE { $group } ON THE MAP
 map-pin-hide = HIDE THIS PIN
 map-pin-unhide = SHOW THIS PIN
 map-pin-move = MOVE
+map-add-media = ADD MEDIA
 map-hidden-pins = HIDDEN PINS
 map-pin-drag = ALT + DRAG MOVES IT
 map-video = VIDEO

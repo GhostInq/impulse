@@ -1,4 +1,4 @@
-//! A pin's clip: downloaded once, decoded on a thread of its own onto the window's GPU, each frame drawn when due.
+//! A pin's clip: downloaded once (or on disk already), decoded on a thread of its own onto the window's GPU, each frame drawn when due.
 //! A view of its own, paced by the clip's frames: a frame repaints the clip, not the map.
 
 use std::{
@@ -26,12 +26,22 @@ pub struct ClipView {
     _play: Task<()>,
 }
 
+/// Where a clip is: a map pin's, through its cache folder, or a file on disk.
+pub enum Source {
+    Cached { dir: PathBuf, url: String },
+    File(PathBuf),
+}
+
 impl ClipView {
-    /// Plays `url`, kept in `dir`, decoded on `device`, the window's.
-    pub fn new(dir: PathBuf, url: String, device: ID3D11Device, cx: &mut Context<Self>) -> Self {
+    /// Plays `source`, decoded on `device`, the window's.
+    pub fn new(source: Source, device: ID3D11Device, cx: &mut Context<Self>) -> Self {
         let registry = Router::registry(cx);
         let play = cx.spawn(async move |clip, cx| {
-            let mut playback = match unblock(move || Playback::start(&media::path(&dir, &url, &registry)?, &device)).await {
+            let file = move || match source {
+                Source::Cached { dir, url } => media::path(&dir, &url, &registry),
+                Source::File(file) => Ok(file),
+            };
+            let mut playback = match unblock(move || Playback::start(&file()?, &device)).await {
                 Ok(playback) => playback,
                 Err(e) => return log::warn!("pin clip not played: {e:#}"),
             };

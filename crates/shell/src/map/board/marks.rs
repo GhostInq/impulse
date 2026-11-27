@@ -6,7 +6,7 @@ use client::map::state::{PinEdit, UserPin};
 use gpui_kit::Context;
 use model::Point;
 
-use super::{Board, BoardEvent, plane};
+use super::{Attach, Board, BoardEvent, Target, plane};
 use crate::Load;
 
 impl Board {
@@ -69,6 +69,9 @@ impl Board {
         let pin = &map.pins[pin];
         let id = self.saved_mut().clone_pin(pin, map.categories[pin.group.0].color);
         self.recount();
+        if let Some(target) = self.target(id.clone()) {
+            self.attach(target, Attach::of(pin, self), cx);
+        }
         self.select_mark(id, false, cx);
         self.filtered(cx);
     }
@@ -79,6 +82,18 @@ impl Board {
         let map = map.clone();
         self.saved_mut().move_pin(id, at, map.frame.as_ref());
         self.save();
+        cx.emit(BoardEvent::MarkMoved);
+        cx.notify();
+    }
+
+    /// Puts `target`'s pin at a typed game `position`, the one way its height changes.
+    pub fn place_mark(&mut self, target: &Target, position: [f64; 3], cx: &mut Context<Self>) {
+        let (Load::Ready(map), Some(pin)) = (&self.map, self.target_pin(target)) else { return };
+        let (map, id) = (map.clone(), pin.id.clone());
+        let Some(frame) = &map.frame else { return };
+        self.saved_mut().place_pin(&id, position, frame);
+        self.save();
+        cx.emit(BoardEvent::MarkMoved);
         cx.notify();
     }
 

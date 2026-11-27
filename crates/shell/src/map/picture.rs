@@ -16,11 +16,17 @@ const TRIM: f32 = 0.006;
 const MARK: f32 = 40.;
 
 /// `layers` (pictures, a clip over them) covering a box of `size`, each over the one before once it shows, all over
-/// `stand_in`. The pictures it decodes (a full size one is about 8 MB) are freed once no frame draws `pin`'s.
-pub fn picture(pin: usize, stand_in: AnyElement, layers: impl IntoIterator<Item = AnyElement>, (width, height): (f32, f32)) -> Div {
+/// `stand_in`. The pictures it decodes (a full size one is about 8 MB) are freed once no frame draws `pin`'s (an id
+/// per pin).
+pub fn picture(
+    pin: impl Into<ElementId>,
+    stand_in: AnyElement,
+    layers: impl IntoIterator<Item = AnyElement>,
+    (width, height): (f32, f32),
+) -> Div {
     let trim = width * TRIM;
     let layer = |content| div().absolute().top(px(-trim)).left(px(-trim)).w(px(width + trim * 2.)).h(px(height + trim * 2.)).child(content);
-    let cached = image_cache(retain_all(("pin-pictures", pin))).size_full().children(layers.into_iter().map(layer));
+    let cached = image_cache(retain_all(pin)).size_full().children(layers.into_iter().map(layer));
     div().relative().flex_none().w(px(width)).h(px(height)).overflow_hidden().child(stand_in).child(cached)
 }
 

@@ -46,6 +46,8 @@ entries! {
     // Older builds' state per map, taken over by `map::state` into `map_data`.
     map_state: "map-state",
     map_data: "map-data",
+    // The user's pins' pictures and clips, of every map (`map::media`).
+    map_media: "map-media",
     pictures: "art",
     tiles: "tiles",
     videos: "videos",

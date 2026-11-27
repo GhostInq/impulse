@@ -25,7 +25,7 @@ blocking.workspace = true
 futures.workspace = true
 gpui-kit.workspace = true
 gpui-pre-windows.workspace = true
-image = { workspace = true, features = ["webp", "png", "jpeg"] }
+image = { workspace = true, features = ["webp", "png", "jpeg", "bmp"] }
 log.workspace = true
 qrcodegen.workspace = true
 raw-window-handle.workspace = true
