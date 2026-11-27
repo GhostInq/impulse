@@ -29,7 +29,7 @@ impl Stage {
     /// Zooms by `factor` about `pixel`; a zoom on its way goes on from where it would end.
     pub(super) fn zoom(&mut self, factor: f64, pixel: Pixel, cx: &mut Context<Self>) {
         let (Some(map), Some(camera)) = (self.map(cx), self.camera) else { return };
-        let spans = self.spans(&self.board.read(cx).saved.tile_set_of(&map).1.tiles);
+        let spans = self.spans(&self.board.read(cx).saved.view().tile_set_of(&map).1.tiles);
         let from = self.glide.map_or(camera.span, |glide| glide.span);
         self.glide = Some(Glide { span: (from * factor).clamp(*spans.start(), *spans.end()), pixel });
         self.hover(None, cx);

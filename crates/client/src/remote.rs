@@ -6,6 +6,8 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::storage::{hex, random_hex};
+
 pub const CODE_LIFE: Duration = Duration::from_secs(5 * 60);
 /// Wrong codes in a row that lock pairing for `LOCK`.
 const TRIES: u32 = 5;
@@ -99,16 +101,6 @@ fn name(user_agent: &str) -> String {
 
 fn hash(token: &str) -> String {
     hex(&Sha256::digest(token.as_bytes()))
-}
-
-fn random_hex<const N: usize>() -> String {
-    let mut bytes = [0u8; N];
-    getrandom::fill(&mut bytes).expect("the system's random source");
-    hex(&bytes)
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// Equal without a time that tells how much of `a` matched.

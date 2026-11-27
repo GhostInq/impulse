@@ -19,6 +19,7 @@ use model::{Glyph, Map, Point, Tiles};
 use super::{
     Stage, Walk,
     camera::{Camera, Pixel, extent},
+    marks::mark_order,
     pins::{self, GROUP_RADIUS},
     tiles::{BACKDROP, Key, STAND_INS},
 };
@@ -54,7 +55,7 @@ struct Shot {
     map: Rc<Map>,
     saved: Rc<Saved>,
     selected: Option<usize>,
-    mark: Option<usize>,
+    mark: Option<Rc<str>>,
     accent: u32,
 }
 
@@ -66,10 +67,20 @@ impl Stage {
             let Load::Ready(map) = &board.map else { return };
             let player =
                 board.player.zip(map.frame.as_ref()).map(|(position, frame)| Walk { at: frame.to_map(position), bearing: board.bearing });
-            (player, Shot { map: map.clone(), saved: board.saved.clone(), selected: board.selected, mark: board.mark, accent: accent(cx) })
+            (
+                player,
+                Shot {
+                    map: map.clone(),
+                    saved: board.saved.clone(),
+                    selected: board.selected,
+                    mark: board.mark.clone(),
+                    accent: accent(cx),
+                },
+            )
         };
         let (map, saved, selected, accent) = (shot.map.clone(), &shot.saved, shot.selected, shot.accent);
-        let (set, pyramid) = saved.tile_set_of(&map);
+        let prefs = saved.view();
+        let (set, pyramid) = prefs.tile_set_of(&map);
         let pyramid = &pyramid.tiles;
         // Another tile set: its own tiles and levels.
         if set != self.set {
@@ -141,7 +152,7 @@ impl Stage {
                 .iter()
                 .zip(&self.shown.regions)
                 .enumerate()
-                .filter(|(_, (region, _))| saved.regions && shows(region.zoom) && !saved.hidden_regions.contains(&region.id));
+                .filter(|(_, (region, _))| prefs.regions && shows(region.zoom) && !prefs.hidden_regions.contains(&region.id));
             for (index, (region, extents)) in regions {
                 // A miter (lyon's limit is 4) reaches up to twice the stroke's width past a corner.
                 let (hovered, pad) = (self.shown.hovered_region == Some(index), f64::from(region.thickness) * 2.);
@@ -193,18 +204,15 @@ impl Stage {
                 let tip = camera.to_view(map.pins[pin].at, area);
                 self.paint_marker(&shot, pin, tip, window, cx);
             }
-            for index in mark_order(saved, shot.mark) {
-                let look = self.mark_look(index, shot.mark);
-                let marker = Marker { group: None, fill: saved.marks[index].color, look, found: false, level: None, picture: false };
-                self.paint_look(marker, None, camera.to_view(plane(saved.marks[index].at), area), window, cx);
-            }
+            let open = shot.mark.as_deref();
+            self.paint_marks(saved, open, &camera, window, cx);
             let pins =
                 markers.iter().filter(|marker| marker.count == 1).filter_map(|marker| Some((marker.at, map.pins[marker.pin].position?)));
-            let marks = mark_order(saved, shot.mark).filter_map(|index| Some((plane(saved.marks[index].at), saved.marks[index].position?)));
+            let marks = mark_order(saved, open).filter_map(|mark| Some((plane(mark.at), mark.position?)));
             self.paint_rises(&map, pins.chain(marks), &camera, window, cx);
 
             // Over the pins, as place names are on a map.
-            for (label, line) in map.labels.iter().zip(&self.shown.labels).filter(|(label, _)| saved.labels && shows(label.zoom)) {
+            for (label, line) in map.labels.iter().zip(&self.shown.labels).filter(|(label, _)| prefs.labels && shows(label.zoom)) {
                 let at = place(camera.to_view(label.at, area));
                 text(line.clone(), label.size.clamp(LABEL_SIZES.0, LABEL_SIZES.1), label.color, true, at, window, cx);
             }
@@ -234,9 +242,10 @@ impl Stage {
         }
         let board = self.board.read(cx);
         let span = 2f64.powf(step as f64 / 2.);
-        let deepest = board.saved.tile_set_of(map).1.tiles.max_zoom;
+        let deepest = board.saved.view().tile_set_of(map).1.tiles.max_zoom;
         let close = span >= self.tile * 2f64.powi(deepest.into()) * 0.9;
-        let clusters = board.saved.clusters && (self.live.is_none() || board.saved.mini_clusters);
+        let view = board.saved.view();
+        let clusters = view.clusters && (self.live.is_none() || view.mini_clusters);
         let markers = Rc::new(pins::markers(&map.pins, |index| board.shows(map, index), span, close || !clusters));
         self.shown.markers = Some((step, markers.clone()));
         markers
@@ -250,7 +259,7 @@ impl Stage {
             GroupIcon::Picture(picture) => (None, Some(picture)),
             GroupIcon::Default => (None, None),
         };
-        let (look, found) = (self.look(index, shot.selected), shot.saved.found.contains(&pin.id));
+        let (look, found) = (self.look(index, shot.selected), shot.saved.found(&pin.id));
         let marker = Marker { group: Some(pin.group), fill: category.color, look, found, level: pin.level, picture: picture.is_some() };
         self.paint_look(marker, glyph, tip, window, cx);
         let Some(picture) = picture else { return };
@@ -265,7 +274,7 @@ impl Stage {
     }
 
     /// A marker at its look's size with its tip on `tip`.
-    fn paint_look(&mut self, marker: Marker, glyph: Option<&Glyph>, tip: Pixel, window: &mut Window, cx: &App) {
+    pub(super) fn paint_look(&mut self, marker: Marker, glyph: Option<&Glyph>, tip: Pixel, window: &mut Window, cx: &App) {
         let scale = marker.look.scale();
         let Some(image) = self.images.marker(marker, glyph, window.scale_factor(), cx) else { return };
         self.paint_snapped(image, (tip.0 - TIP.0 * scale, tip.1 - TIP.1 * scale), false, window);
@@ -279,14 +288,6 @@ impl Stage {
         let (pixels, shrink) = (image.size(0), 1. / device);
         let rect = Bounds::new(corner, size(px(pixels.width.0 as f32 * shrink), px(pixels.height.0 as f32 * shrink)));
         let _ = window.paint_image(rect, rect, Corners::default(), image, 0, gray);
-    }
-
-    pub(super) fn mark_look(&self, index: usize, mark: Option<usize>) -> Look {
-        match Some(index) {
-            index if index == mark => Look::Selected,
-            index if index == self.shown.hovered_mark => Look::Hovered,
-            _ => Look::Plain,
-        }
     }
 
     /// Draws `camera`'s tiles and loads `end`'s, the view it is on its way to.
@@ -373,11 +374,6 @@ impl Stage {
         })
         .detach();
     }
-}
-
-/// The user's own pins as drawn, bottom to top: the oldest first, the open one last.
-pub(super) fn mark_order(saved: &Saved, mark: Option<usize>) -> impl DoubleEndedIterator<Item = usize> + '_ {
-    (0..saved.marks.len()).filter(move |&index| saved.marks_shown && mark != Some(index)).chain(mark)
 }
 
 /// A tile in the atlas's BGRA with its edge texels repeated around it: the atlas has no gaps and filters across an

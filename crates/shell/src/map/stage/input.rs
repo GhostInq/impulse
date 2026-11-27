@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{rc::Rc, time::Duration};
 
 use gpui_kit::{
     App, Context, Div, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ScrollEvent, Stateful, Task, Window, prelude::*, px,
@@ -8,7 +8,7 @@ use model::{Map, Point};
 use super::{
     Drag, Stage,
     camera::{Camera, Pixel},
-    paint::mark_order,
+    marks::mark_order,
     pins,
 };
 use crate::map::{
@@ -120,15 +120,16 @@ impl Stage {
         let hit = self.hit(&map, &camera, pixel, cx).filter(|_| mark.is_none());
         let hovered = hit.filter(|marker| over && marker.count == 1).map(|marker| marker.pin);
         if self.shown.hovered_mark != mark {
-            self.shown.hovered_mark = mark;
+            self.shown.hovered_mark = mark.clone();
             cx.notify();
         }
         let saved = self.board.read(cx).saved.clone();
-        let region = if over && hit.is_none() && mark.is_none() && saved.regions {
+        let view = saved.view();
+        let region = if over && hit.is_none() && mark.is_none() && view.regions {
             let at = camera.to_plane(pixel, self.size());
             map.regions
                 .iter()
-                .position(|region| !saved.hidden_regions.contains(&region.id) && region.outlines.iter().any(|ring| inside(at, ring)))
+                .position(|region| !view.hidden_regions.contains(&region.id) && region.outlines.iter().any(|ring| inside(at, ring)))
         } else {
             None
         };
@@ -166,11 +167,11 @@ impl Stage {
             return;
         }
         let pixel = self.pixel(event.position);
-        let (selected, open) = (self.board.read(cx).selected, self.board.read(cx).mark);
+        let (selected, open) = (self.board.read(cx).selected, self.board.read(cx).mark.clone());
         if let Some(mark) = self.hit_mark(&camera, pixel, cx) {
             // The open one again: closed.
             return self.board.update(cx, |board, cx| {
-                if open == Some(mark) {
+                if open.as_ref() == Some(&mark) {
                     board.deselect(cx);
                 } else {
                     board.select_mark(mark, false, cx);
@@ -200,11 +201,13 @@ impl Stage {
         pins::hit(&markers, &lifted, camera, self.size(), pixel)
     }
 
-    fn hit_mark(&self, camera: &Camera, pixel: Pixel, cx: &App) -> Option<usize> {
+    fn hit_mark(&self, camera: &Camera, pixel: Pixel, cx: &App) -> Option<Rc<str>> {
         let (board, size) = (self.board.read(cx), self.size());
-        mark_order(&board.saved, board.mark).rev().find(|&index| {
-            pins::on_head(camera.to_view(plane(board.saved.marks[index].at), size), self.mark_look(index, board.mark).scale(), pixel)
-        })
+        let open = board.mark.as_deref();
+        let hit = mark_order(&board.saved, open)
+            .rev()
+            .find(|mark| pins::on_head(camera.to_view(plane(mark.at), size), self.mark_look(&mark.id, open).scale(), pixel));
+        hit.map(|mark| mark.id.clone())
     }
 }
 

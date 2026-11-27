@@ -77,7 +77,7 @@ impl Card {
         let index = board.selected?;
         let pin = &map.pins[index];
         let category = &map.categories[pin.group.0];
-        let found = board.saved.found.contains(&pin.id);
+        let found = board.saved.found(&pin.id);
         let teleport = pin.position.filter(|_| board.can_teleport(map));
         let accent = rgb(accent(cx));
         let badge = h_flex()
@@ -163,8 +163,8 @@ impl Card {
             .on_click(cx.listener(move |card, _, _, cx| {
                 card.board.update(cx, |board, cx| {
                     board.filter(
-                        |saved| {
-                            saved.hidden.insert(hide_id.clone());
+                        |view| {
+                            view.hidden_groups.insert(hide_id.clone());
                         },
                         cx,
                     )
@@ -230,6 +230,7 @@ impl Card {
 mod tests {
     use std::{path::PathBuf, rc::Rc};
 
+    use client::storage::Paths;
     use model::{Map, Pin, Point, Text, TileSet, Tiles};
 
     use super::*;
@@ -260,7 +261,7 @@ mod tests {
             teleport: false,
             unfinished: false,
         };
-        let mut board = Board::new(PathBuf::new(), PathBuf::new());
+        let mut board = Board::new(Paths::new(PathBuf::new()), PathBuf::new());
         board.map = Load::Ready(Rc::new(map));
         assert!(nearest(&board).is_empty());
         board.selected = Some(0);

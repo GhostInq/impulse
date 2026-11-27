@@ -3,6 +3,7 @@
 
 mod camera;
 mod input;
+mod marks;
 mod motion;
 mod overlays;
 mod paint;
@@ -58,7 +59,7 @@ struct Shown {
     // The hovered pin once the cursor has rested on it.
     chip: Option<usize>,
     hovered_region: Option<usize>,
-    hovered_mark: Option<usize>,
+    hovered_mark: Option<Rc<str>>,
     // Where a right click opened its menu.
     target: Option<Point>,
 }
@@ -140,7 +141,7 @@ impl Stage {
             BoardEvent::Bring { to, close } => {
                 let board = board.read(cx);
                 if let Load::Ready(map) = &board.map {
-                    stage.bring(*to, *close, &board.saved.tile_set_of(map).1.tiles);
+                    stage.bring(*to, *close, &board.saved.view().tile_set_of(map).1.tiles);
                 }
             }
         })
@@ -219,7 +220,7 @@ impl Stage {
         self.stale.extend(self.images.clear());
         (self.shown, self.glide, self.clock) = (Shown::of(map), None, None);
         if first {
-            self.camera = board.saved.view.map(|(x, y, span)| Camera { center: Point { x, y }, span });
+            self.camera = board.saved.view().camera.map(|(x, y, span)| Camera { center: Point { x, y }, span });
         }
     }
 

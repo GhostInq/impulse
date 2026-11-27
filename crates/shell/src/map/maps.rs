@@ -102,8 +102,8 @@ impl Maps {
         })
         .detach();
         let art = Media::Pictures.dir(paths);
-        let board = cx.new(|_| Board::new(paths.map_state(), art.clone()));
-        let live_board = cx.new(|_| Board::live(paths.map_state(), art));
+        let board = cx.new(|_| Board::new(paths.clone(), art.clone()));
+        let live_board = cx.new(|_| Board::live(paths.clone(), art));
         let live_map = cx.new(|cx| LiveMap::new(registry.clone(), live_board, board.clone(), Media::Tiles.dir(paths), paths, cx));
         Self {
             registry,
@@ -382,7 +382,7 @@ impl Maps {
     fn keep_view(&mut self, cx: &mut Context<Self>) {
         let Some(camera) = &self.camera else { return };
         let view = camera(cx);
-        self.board.update(cx, |board, _| board.saved_mut().view = view);
+        self.board.update(cx, |board, _| board.keep_camera(view));
     }
 
     /// The minimap follows the live run while its dock is shown.

@@ -11,7 +11,7 @@ use std::{
 
 use anyhow::{Context, Result};
 
-pub use stored::{Stored, VERSION, read, write};
+pub use stored::{Stored, VERSION, read};
 
 /// Writes through a temporary file, so a crash never leaves a half-written one.
 pub fn replace(path: &Path, data: &[u8]) -> Result<()> {

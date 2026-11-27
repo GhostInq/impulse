@@ -1,5 +1,6 @@
 //! Moving the player through the live trainer: to a pin, a plane point or a spot the player stood on.
 
+use client::map::state::UserPin;
 use gpui_kit::Context;
 use model::{Map, Point};
 
@@ -35,21 +36,17 @@ impl Board {
         self.teleport(to, cx);
     }
 
-    /// Whether the user's pin `index` can be reached; one of the player's position needs no fix of the player.
-    pub fn can_teleport_to_mark(&self, map: &Map, index: usize) -> bool {
-        match self.saved.marks.get(index) {
-            Some(mark) if mark.position.is_some() => self.can_teleport(map),
-            Some(_) => self.can_teleport_to_plane(map),
-            None => false,
-        }
+    /// Whether the user's pin can be reached; one of the player's position needs no fix of the player.
+    pub fn can_teleport_to_mark(&self, map: &Map, mark: &UserPin) -> bool {
+        if mark.position.is_some() { self.can_teleport(map) } else { self.can_teleport_to_plane(map) }
     }
 
     /// A pin of the player's position goes back there exactly, another to its point at the player's height.
-    pub fn teleport_to_mark(&mut self, index: usize, cx: &mut Context<Self>) {
-        let Some(mark) = self.saved.marks.get(index) else { return };
-        match mark.position {
+    pub fn teleport_to_mark(&mut self, id: &str, cx: &mut Context<Self>) {
+        let Some(&UserPin { at, position, .. }) = self.saved.pin(id) else { return };
+        match position {
             Some(position) => self.teleport_exact(position, cx),
-            None => self.teleport_to_plane(plane(mark.at), cx),
+            None => self.teleport_to_plane(plane(at), cx),
         }
     }
 

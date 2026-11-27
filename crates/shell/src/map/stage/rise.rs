@@ -24,7 +24,7 @@ impl Stage {
         cx: &mut App,
     ) {
         let board = self.board.read(cx);
-        let (Some(frame), Some(player)) = (&map.frame, board.player.filter(|_| board.here && board.saved.rises)) else { return };
+        let (Some(frame), Some(player)) = (&map.frame, board.player.filter(|_| board.here && board.saved.view().rises)) else { return };
         let (ground, area, origin) = ((frame.to_map(player), frame.height(player)), self.size(), self.bounds.origin);
         for (at, position) in places {
             let Some(rise) = rise(frame, ground, at, position) else { continue };

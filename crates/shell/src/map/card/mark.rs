@@ -1,6 +1,6 @@
 //! The card of a pin of the user's own: named, noted, colored, kept with the map's state.
 
-use client::map::state::{Mark, PALETTE};
+use client::map::state::{PALETTE, PinEdit};
 use gpui_kit::{
     AnyElement, Context, Entity, EventEmitter, FontWeight, Subscription, Window,
     component::{
@@ -36,23 +36,18 @@ pub(super) fn inputs(window: &mut Window, cx: &mut Context<Card>) -> (Entity<Inp
         note
     });
     let relabels = Subscription::join(named, relabel(&note, key::MAP_NOTE_FIELD, window, cx));
-    edits(&name, |input| input.value().to_string(), |mark| &mut mark.name, cx);
-    edits(&note, |input| input.value().to_string(), |mark| &mut mark.note, cx);
+    edits(&name, |input| input.value().to_string(), PinEdit::Name, cx);
+    edits(&note, |input| input.value().to_string(), PinEdit::Description, cx);
     (name, note, relabels)
 }
 
-fn edits<T: EventEmitter<InputEvent>>(
-    input: &Entity<T>,
-    text: fn(&T) -> String,
-    field: fn(&mut Mark) -> &mut String,
-    cx: &mut Context<Card>,
-) {
+fn edits<T: EventEmitter<InputEvent>>(input: &Entity<T>, text: fn(&T) -> String, edit: fn(String) -> PinEdit, cx: &mut Context<Card>) {
     cx.subscribe(input, move |card, input, event: &InputEvent, cx| match event {
         InputEvent::Change => {
             let text = text(input.read(cx));
-            card.board.update(cx, |board, cx| board.edit_mark(|mark| *field(mark) = text, cx));
+            card.board.update(cx, |board, cx| board.edit_mark(edit(text), cx));
         }
-        InputEvent::Blur => card.board.read(cx).save(),
+        InputEvent::Blur => card.board.update(cx, |board, _| board.save()),
         _ => {}
     })
     .detach();
@@ -61,16 +56,15 @@ fn edits<T: EventEmitter<InputEvent>>(
 impl Card {
     pub(super) fn fill_mark(&mut self, board: &Entity<Board>, window: &mut Window, cx: &mut Context<Self>) {
         let board = board.read(cx);
-        let Some(mark) = board.mark.and_then(|index| board.saved.marks.get(index)) else { return };
-        let (name, note) = (mark.name.clone(), mark.note.clone());
+        let Some(mark) = board.open_mark() else { return };
+        let (name, note) = (mark.name.clone(), mark.description.clone());
         self.mark_name.update(cx, |input, cx| input.set_value(name, window, cx));
         self.mark_note.update(cx, |input, cx| input.set_value(note, window, cx));
     }
 
     pub(super) fn mark_card(&self, map: &Map, board: &Board, cx: &Context<Self>) -> Option<AnyElement> {
-        let index = board.mark?;
-        let mark = board.saved.marks.get(index)?;
-        let color = mark.color;
+        let mark = board.open_mark()?;
+        let (id, color) = (mark.id.clone(), mark.color);
         let field = || div().px(px(8.)).py(px(4.)).border_1().border_color(line(0.14)).bg(rgb(SUNKEN)).text_size(px(TYPE_BODY));
         let swatches = PALETTE.iter().enumerate().map(|(slot, &swatch)| {
             div()
@@ -82,21 +76,22 @@ impl Card {
                 .border_color(if swatch == color { rgb(TEXT_BRIGHT) } else { rgb(PANEL) })
                 .on_click(cx.listener(move |card, _, _, cx| {
                     card.board.update(cx, |board, cx| {
-                        board.edit_mark(|mark| mark.color = swatch, cx);
+                        board.edit_mark(PinEdit::Color(swatch), cx);
                         board.save();
                     })
                 }))
         });
-        let teleport = board.can_teleport_to_mark(map, index).then(|| {
+        let teleport = board.can_teleport_to_mark(map, mark).then(|| {
+            let id = id.clone();
             button(&t(cx, key::MAP_TELEPORT))
                 .id("mark-teleport")
                 .flex_1()
-                .on_click(cx.listener(move |card, _, _, cx| card.board.update(cx, |board, cx| board.teleport_to_mark(index, cx))))
+                .on_click(cx.listener(move |card, _, _, cx| card.board.update(cx, |board, cx| board.teleport_to_mark(&id, cx))))
         });
         let delete = button(&t(cx, key::MAP_DELETE))
             .id("mark-delete")
             .flex_1()
-            .on_click(cx.listener(move |card, _, _, cx| card.board.update(cx, |board, cx| board.delete_mark(index, cx))));
+            .on_click(cx.listener(move |card, _, _, cx| card.board.update(cx, |board, cx| board.delete_mark(&id, cx))));
         let close = icon_button("mark-close", Icon::Close, 28., 11.).on_click(cx.listener(|card, _, _, cx| {
             card.board.update(cx, |board, cx| board.deselect(cx));
         }));

@@ -34,6 +34,17 @@ pub fn name(text: &str) -> String {
     out
 }
 
+/// `N` random bytes in hex: a new id or token.
+pub(crate) fn random_hex<const N: usize>() -> String {
+    let mut bytes = [0u8; N];
+    getrandom::fill(&mut bytes).expect("the system's random source");
+    hex(&bytes)
+}
+
+pub(crate) fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 fn escape(out: &mut String, byte: u8, escaped: bool) {
     match escaped {
         true => write!(out, "_{byte:02x}").unwrap_or_default(),

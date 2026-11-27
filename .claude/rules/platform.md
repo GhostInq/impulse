@@ -40,7 +40,7 @@ Small Windows and I/O crates with no dependency on our other crates but `model` 
 
 ## disk
 - `replace(path, data)`: how every app file is written (temp file, rename). `size(path)`: a file's or folder's bytes, blocking.
-- `Stored<T>`: a typed JSON file (`client`'s and `plugins`' alike; `client::storage` re-exports it): missing means the defaults, not JSON moves aside, an object carries `VERSION` and one of another version is never written. `edit` logs a failed save and keeps the change; `try_edit` (`T: Clone`) saves a copy first, publishes it only when saved, and errors on a store that does not save. `read`, `write` for files kept by hand.
+- `Stored<T>`: a typed JSON file (`client`'s and `plugins`' alike; `client::storage` re-exports it): missing means the defaults, not JSON moves aside, an object carries `VERSION` and one of another version is never written. `edit` logs a failed save and keeps the change; `get_mut` changes it now and `flush` saves it if changed; `try_edit` (`T: Clone`) saves a copy first, publishes it only when saved, and errors on a store that does not save. The default has no file and never saves. `read` for a file kept by hand.
 
 ## fetch
 - `get(url, etag)`: blocking GET for public CDNs only (they send no CORS headers). The WeMod API goes through `wand`'s bridge. Body capped at 64 MiB and left unread on a 304 (it sends none, and GitHub's names an encoding the decoder would fail on) or a 4xx or 5xx (their `edge`: `server`, `cf-ray` and `cf-cache-status`, names who answered), 120 s timeout. Run it off the UI thread.

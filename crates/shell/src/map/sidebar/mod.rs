@@ -6,7 +6,7 @@ mod teleport;
 
 use std::{collections::HashSet, rc::Rc, sync::Arc};
 
-use client::map::state::Saved;
+use client::map::state::View;
 use gpui_kit::{
     AnyElement, App, Context, Div, ElementId, Entity, Focusable, FontWeight, IntoElement, MouseButton, Render, RenderImage, SharedString,
     Stateful, Subscription, Window,
@@ -164,10 +164,9 @@ impl Sidebar {
         if open {
             for (index, (name, color)) in names.into_iter().enumerate() {
                 let parts: Vec<String> = map.regions.iter().filter(|region| region.name == name).map(|region| region.id.clone()).collect();
-                let shown = parts.iter().any(|part| !board.saved.hidden_regions.contains(part));
+                let shown = parts.iter().any(|part| !board.saved.view().hidden_regions.contains(part));
                 let row = item(("map-region", index), check(color, shown), name, shown).pl(px(32.));
-                let toggle =
-                    cx.listener(move |sidebar, _, _, cx| flip(&sidebar.board, |saved| &mut saved.hidden_regions, &parts, shown, cx));
+                let toggle = cx.listener(move |sidebar, _, _, cx| flip(&sidebar.board, |view| &mut view.hidden_regions, &parts, shown, cx));
                 rows.push(row.on_click(toggle).into_any_element());
             }
         }
@@ -177,10 +176,10 @@ impl Sidebar {
     fn category(&mut self, map: &Map, board: &Board, index: usize, window: &Window, cx: &Context<Self>) -> Vec<AnyElement> {
         let category = &map.categories[index];
         let ids: Vec<String> = category.groups.iter().map(|group| group.id.clone()).collect();
-        let shown = ids.iter().any(|id| !board.saved.hidden.contains(id));
+        let shown = ids.iter().any(|id| !board.saved.view().hidden_groups.contains(id));
         let (found, total): (usize, usize) = (board.found_counts[index].iter().sum(), board.counts[index].iter().sum());
         let open = !self.folded.contains(&index);
-        let toggle = cx.listener(move |sidebar, _, _, cx| flip(&sidebar.board, |saved| &mut saved.hidden, &ids, shown, cx));
+        let toggle = cx.listener(move |sidebar, _, _, cx| flip(&sidebar.board, |view| &mut view.hidden_groups, &ids, shown, cx));
         let mark = div().id(("map-category-check", index)).child(check(category.color, shown)).on_click(move |event, window, cx| {
             cx.stop_propagation();
             toggle(event, window, cx);
@@ -207,7 +206,7 @@ impl Sidebar {
     fn group_cell(&mut self, map: &Map, board: &Board, at: (usize, usize), window: &Window, cx: &Context<Self>) -> AnyElement {
         let category = &map.categories[at.0];
         let group = &category.groups[at.1];
-        let shown = !board.saved.hidden.contains(&group.id);
+        let shown = !board.saved.view().hidden_groups.contains(&group.id);
         let color = if shown { legible(category.color) } else { GHOST };
         let glyph = self.images.glyph(board.icon(at, cx), at, color, ICON, window, cx);
         let (toggle_id, only_id) = (group.id.clone(), group.id.clone());
@@ -223,9 +222,9 @@ impl Sidebar {
             .on_click(cx.listener(move |sidebar, _, _, cx| {
                 sidebar.board.update(cx, |board, cx| {
                     board.filter(
-                        |saved| {
-                            if !saved.hidden.remove(&toggle_id) {
-                                saved.hidden.insert(toggle_id.clone());
+                        |view| {
+                            if !view.hidden_groups.remove(&toggle_id) {
+                                view.hidden_groups.insert(toggle_id.clone());
                             }
                         },
                         cx,
@@ -240,7 +239,7 @@ impl Sidebar {
                         let Load::Ready(map) = &board.map else { return };
                         let others = map.categories.iter().flat_map(|category| &category.groups).filter(|group| group.id != only_id);
                         let hidden = others.map(|group| group.id.clone()).collect();
-                        board.filter(|saved| saved.hidden = hidden, cx);
+                        board.filter(|view| view.hidden_groups = hidden, cx);
                     })
                 }),
             )
@@ -274,7 +273,7 @@ impl Sidebar {
                         .child(div().truncate().text_size(px(TYPE_LEAD)).text_color(rgb(TEXT_2)).child(pin.name.clone()))
                         .child(mono(kind(map, pin), TYPE_CAPTION).truncate().text_color(rgb(FAINT))),
                 )
-                .when(board.saved.found.contains(&pin.id), |row| row.child(icon(Icon::Check, 12., rgb(accent(cx)))))
+                .when(board.saved.found(&pin.id), |row| row.child(icon(Icon::Check, 12., rgb(accent(cx)))))
                 .on_click(cx.listener(move |sidebar, _, _, cx| sidebar.board.update(cx, |board, cx| board.select(index, true, cx))));
             rows.push(row.into_any_element());
         }
@@ -334,8 +333,8 @@ fn progress(map: &Map, board: &Board, cx: &App) -> Div {
 }
 
 fn quick_filters(map: &Map, board: &Board, cx: &Context<Sidebar>) -> impl IntoElement {
-    let saved = &board.saved;
-    let all_hidden = map.categories.iter().flat_map(|category| &category.groups).all(|group| saved.hidden.contains(&group.id));
+    let view = board.saved.view();
+    let all_hidden = map.categories.iter().flat_map(|category| &category.groups).all(|group| view.hidden_groups.contains(&group.id));
     let cell = |id: &'static str, label: SharedString, on: bool, enabled: bool| {
         let color = match (enabled, on) {
             (false, _) => GHOST,
@@ -355,7 +354,7 @@ fn quick_filters(map: &Map, board: &Board, cx: &Context<Sidebar>) -> impl IntoEl
             .when(enabled, |cell| cell.cursor_pointer().hover(|style| style.border_color(line(0.3))))
             .child(mono(label, TYPE_CAPTION).font_weight(FontWeight::BOLD).text_color(rgb(color)))
     };
-    let change = |change: fn(&mut client::map::state::Saved)| {
+    let change = |change: fn(&mut View)| {
         cx.listener(move |sidebar: &mut Sidebar, _, _, cx| sidebar.board.update(cx, |board, cx| board.filter(change, cx)))
     };
     let toggle_all = cx.listener(move |sidebar, _, _, cx| {
@@ -363,7 +362,7 @@ fn quick_filters(map: &Map, board: &Board, cx: &Context<Sidebar>) -> impl IntoEl
             let Load::Ready(map) = &board.map else { return };
             let ids = map.categories.iter().flat_map(|category| &category.groups).map(|group| group.id.clone());
             let hidden = if all_hidden { Default::default() } else { ids.collect() };
-            board.filter(|saved| saved.hidden = hidden, cx);
+            board.filter(|view| view.hidden_groups = hidden, cx);
         })
     });
     h_flex()
@@ -372,10 +371,10 @@ fn quick_filters(map: &Map, board: &Board, cx: &Context<Sidebar>) -> impl IntoEl
         .pb(px(12.))
         .child(cell("map-all", t(cx, if all_hidden { key::MAP_SHOW_ALL } else { key::MAP_HIDE_ALL }), false, true).on_click(toggle_all))
         .child(
-            cell("map-teleportable", t(cx, key::MAP_FILTER_TELEPORT), saved.teleport_only, map.teleport)
-                .when(map.teleport, |cell| cell.on_click(change(|saved| saved.teleport_only ^= true))),
+            cell("map-teleportable", t(cx, key::MAP_FILTER_TELEPORT), view.teleport_only, map.teleport)
+                .when(map.teleport, |cell| cell.on_click(change(|view| view.teleport_only ^= true))),
         )
-        .child(cell("map-unfound", t(cx, key::MAP_UNFOUND), saved.unfound_only, true).on_click(change(|saved| saved.unfound_only ^= true)))
+        .child(cell("map-unfound", t(cx, key::MAP_UNFOUND), view.unfound_only, true).on_click(change(|view| view.unfound_only ^= true)))
         .child(
             cell("map-refresh", t(cx, key::MAP_REFRESH), false, true)
                 .on_click(cx.listener(|sidebar, _, _, cx| sidebar.maps.update(cx, |maps, cx| maps.refresh(cx)))),
@@ -424,11 +423,11 @@ fn item(id: impl Into<ElementId>, mark: Div, name: &str, shown: bool) -> Statefu
 }
 
 /// A check's click: `ids` hide while any shows, else they all show.
-fn flip(board: &Entity<Board>, set: fn(&mut Saved) -> &mut FxHashSet<String>, ids: &[String], shown: bool, cx: &mut App) {
+fn flip(board: &Entity<Board>, set: fn(&mut View) -> &mut FxHashSet<String>, ids: &[String], shown: bool, cx: &mut App) {
     board.update(cx, |board, cx| {
         board.filter(
-            |saved| {
-                let set = set(saved);
+            |view| {
+                let set = set(view);
                 for id in ids {
                     if shown {
                         set.insert(id.clone());
