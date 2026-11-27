@@ -103,7 +103,6 @@ struct Deltas {
 struct AxisNames {
     x: Option<String>,
     y: Option<String>,
-    z: Option<String>,
 }
 
 #[derive(Default, Deserialize)]
@@ -173,7 +172,6 @@ pub fn map(raw: &str) -> Result<(model::Map, Vec<Vec<String>>)> {
     let Response { metadata, geojson, regions, labels } = serde_json::from_str(raw).context("unexpected map format")?;
     let tiles = tiles(metadata.tile_source)?;
     let frame = metadata.player_location_deltas.and_then(|located| located.deltas).and_then(frame);
-    let axes = frame.as_ref().map_or([0, 1, 2], |frame| frame.axes);
 
     let mut ordered = metadata.categories;
     // Without an order a category goes last, in the given order.
@@ -225,13 +223,8 @@ pub fn map(raw: &str) -> Result<(model::Map, Vec<Vec<String>>)> {
             group,
             image,
             video: p.video_path.filter(|video| !video.is_empty()),
-            position: p.game_coords.map(|game| {
-                let mut position = [0.; 3];
-                for (axis, value) in axes.into_iter().zip([game.x, game.y, game.z]) {
-                    position[axis] = value;
-                }
-                position
-            }),
+            // In the game's own order, as the trainer's position is.
+            position: p.game_coords.map(|game| [game.x, game.y, game.z]),
             level: match p.vertical_level.as_deref() {
                 Some("above") => Some(Level::Above),
                 Some("below") => Some(Level::Below),
@@ -376,13 +369,13 @@ fn point(coordinates: &[f64]) -> Option<Point> {
 fn frame(deltas: Deltas) -> Option<Frame> {
     let names = deltas.game_coords_map?;
     let axis = |name: Option<String>| ["x", "y", "z"].iter().position(|known| Some(*known) == name.as_deref());
-    let axes = [axis(names.x)?, axis(names.y)?, axis(names.z)?];
-    let mut sorted = axes;
-    sorted.sort_unstable();
+    let (along_x, along_y) = (axis(names.x)?, axis(names.y)?);
+    // Up is the axis the plane leaves, whatever `z` names: a map may name one of the plane's there (Castor Woods).
+    let axes = [along_x, along_y, 3usize.checked_sub(along_x + along_y)?];
     let (x, y) = (deltas.scale_x? * CIRCUMFERENCE, deltas.scale_y? * CIRCUMFERENCE);
     let scale = (1. / x, -1. / y);
     let origin = Point { x: 0.5 - deltas.offset_x? / x, y: 0.5 + deltas.offset_y? / y };
-    let sound = sorted == [0, 1, 2] && scale.0.is_normal() && scale.1.is_normal() && origin.x.is_finite() && origin.y.is_finite();
+    let sound = along_x != along_y && scale.0.is_normal() && scale.1.is_normal() && origin.x.is_finite() && origin.y.is_finite();
     sound.then_some(Frame { axes, origin, scale })
 }
 
