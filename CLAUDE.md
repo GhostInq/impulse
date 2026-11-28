@@ -31,7 +31,7 @@ Native Rust + GPUI client for the user's own Wand (WeMod) account and install. W
 - `plugins` - the WASM host: a plugin as a source, its limits, the import of its answers, their cache.
 - `sdk` - what a plugin builds against: the v1 wire, the manifest's format, the guest's side of the ABI.
 - `i18n` - the languages we ship and the catalogs: Fluent messages by domain, over English.
-- `keyhook`, `topmost`, `tray`, `video`, `sound` - Win32 and media leaves: key hooks, the overlay's window calls, the tray icon, clips on the GPU, cue sounds.
+- `keyhook`, `topmost`, `tray`, `video`, `sound`, `capture` - Win32 and media leaves: key hooks, the overlay's window calls, the tray icon, clips on the GPU, cue sounds, a frame of a window.
 - `updater` - self-update: the release feed, the download checked against its digest, the swap of the running executable, `CHANGELOG.md`'s sections.
 - `journal`, `disk`, `fetch`, `pe` - the log, atomic file writes and typed JSON files, public CDN GETs, PE headers.
 - `checks` - tests holding the crate graph, file sizes, the texts (no literal caption, every id in English, no other in a translation) and the rule files' globs; they cover `web/panel` too.

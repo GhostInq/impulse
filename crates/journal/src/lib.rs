@@ -24,9 +24,10 @@ pub const CAPACITY: usize = 5000;
 const FILE_LIMIT: u64 = 2 << 20;
 const APP: &str = "impulse";
 /// The workspace's crates: their records are kept from Debug up, the others' from Warn.
-const OURS: [&str; 22] = [
+const OURS: [&str; 23] = [
     APP,
     "agent",
+    "capture",
     "checks",
     "client",
     "disk",

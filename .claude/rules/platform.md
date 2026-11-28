@@ -1,6 +1,6 @@
 ---
 paths:
-  - "crates/{keyhook,topmost,tray,video,sound,journal,disk,fetch,pe,updater}/**"
+  - "crates/{keyhook,topmost,tray,video,sound,capture,journal,disk,fetch,pe,updater}/**"
 ---
 
 # Platform leaves
@@ -32,6 +32,10 @@ Small Windows and I/O crates with no dependency on our other crates but `model` 
 ## sound
 - `Cue` (toggle on and off, slider, number, button, selection; serde, so `shell` saves it by name), `play(cue, file)` and `is_clip(file)`: async `PlaySoundW` of WAVs generated in memory once (no files ship: `synth` makes struck notes, a pair a fourth apart with a soft click and an exponential decay, the off sound a fourth below the on), or of the user's `file` when winmm takes it.
 - One sound at a time: a new cue replaces the one playing. `play` never waits for the sound and may be called from any thread; a `file` is opened inside the call (winmm answers `FALSE` for a missing one: the built-in tone plays), so only local files are expected. `is_clip` (RIFF/WAVE with a format and a nonempty data chunk, 1 MiB, a path of 255 units) reads the file: call it off the UI thread.
+
+## capture
+- `window(hwnd, within) -> Shot`: one frame of a window through Windows.Graphics.Capture, BGRA rows tight and top-down, the cursor and the capture border left out where Windows lets it. Blocking: run it off the UI thread. Its own D3D11 device and an MTA it balances; a minimized window is an error, no frame `within` too.
+- A window capture holds only that window: a topmost window over it is not in it, a layer drawn into its frame is.
 
 ## journal
 - `init` first in `main`, before anything logs. `since`, `subscribe`, `closing` (call when the last window closes), `dir`.

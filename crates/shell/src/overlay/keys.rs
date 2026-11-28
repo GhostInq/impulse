@@ -15,10 +15,11 @@ pub(crate) enum Slot {
     Minimap,
     ZoomIn,
     ZoomOut,
+    PinHere,
 }
 
 impl Slot {
-    pub const ALL: [Slot; 3] = [Slot::Minimap, Slot::ZoomIn, Slot::ZoomOut];
+    pub const ALL: [Slot; 4] = [Slot::Minimap, Slot::ZoomIn, Slot::ZoomOut, Slot::PinHere];
 
     pub fn default_key(self) -> Key {
         match self {
@@ -26,6 +27,7 @@ impl Slot {
             // Plus and Minus of the main block.
             Slot::ZoomIn => Key::new(CTRL_SHIFT, 0xBB),
             Slot::ZoomOut => Key::new(CTRL_SHIFT, 0xBD),
+            Slot::PinHere => Key::new(CTRL_SHIFT, b'P'),
         }
     }
 }
@@ -39,6 +41,7 @@ struct Saved {
     minimap: Option<Vec<u8>>,
     zoom_in: Option<Vec<u8>>,
     zoom_out: Option<Vec<u8>>,
+    pin_here: Option<Vec<u8>>,
 }
 
 impl Saved {
@@ -47,6 +50,7 @@ impl Saved {
             Slot::Minimap => &self.minimap,
             Slot::ZoomIn => &self.zoom_in,
             Slot::ZoomOut => &self.zoom_out,
+            Slot::PinHere => &self.pin_here,
         }
     }
 
@@ -55,6 +59,7 @@ impl Saved {
             Slot::Minimap => &mut self.minimap,
             Slot::ZoomIn => &mut self.zoom_in,
             Slot::ZoomOut => &mut self.zoom_out,
+            Slot::PinHere => &mut self.pin_here,
         }
     }
 

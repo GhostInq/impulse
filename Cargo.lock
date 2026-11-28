@@ -833,6 +833,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "capture"
+version = "0.6.1"
+dependencies = [
+ "anyhow",
+ "log",
+ "windows 0.62.2",
+]
+
+[[package]]
 name = "cbc"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -955,6 +964,7 @@ dependencies = [
  "fetch",
  "futures",
  "getrandom 0.4.3",
+ "image",
  "launchers",
  "log",
  "model",
@@ -6923,6 +6933,7 @@ version = "0.6.1"
 dependencies = [
  "anyhow",
  "blocking",
+ "capture",
  "client",
  "disk",
  "futures",

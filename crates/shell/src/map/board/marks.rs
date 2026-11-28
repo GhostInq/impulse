@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use client::map::state::{PinEdit, UserPin};
 use gpui_kit::Context;
-use model::Point;
+use model::{Frame, Point, Ref};
 
 use super::{Attach, Board, BoardEvent, Target, plane};
 use crate::Load;
@@ -33,11 +33,37 @@ impl Board {
         self.add_mark(at, Some(player), cx);
     }
 
-    pub fn add_mark(&mut self, at: Point, position: Option<[f64; 3]>, cx: &mut Context<Self>) {
+    /// PIN HERE: one of the user's pins at the player's game `position`, placed on `frame`, while the board holds `map`
+    /// in that frame; its height only when `told`, with `picture`.
+    pub fn pin_player(
+        &mut self,
+        map: &Ref,
+        frame: &Frame,
+        position: [f64; 3],
+        told: bool,
+        picture: Option<Vec<u8>>,
+        cx: &mut Context<Self>,
+    ) {
+        let Load::Ready(shown) = &self.map else { return };
+        if self.id.as_ref() != Some(map) || shown.frame.as_ref() != Some(frame) {
+            return;
+        }
+        let id = self.add_mark(frame.to_map(position), told.then_some(position), cx);
+        if let (Some(picture), Some(target)) = (picture, self.target(id)) {
+            self.attach(target, vec![Attach::Bytes(picture)], cx);
+        }
+    }
+
+    /// Its card opens only on screen.
+    pub fn add_mark(&mut self, at: Point, position: Option<[f64; 3]>, cx: &mut Context<Self>) -> Rc<str> {
         let id = self.saved_mut().add_pin(at, position);
-        self.select_mark(id, false, cx);
         self.save();
-        cx.emit(BoardEvent::MarkAdded);
+        if self.open {
+            self.select_mark(id.clone(), false, cx);
+            cx.emit(BoardEvent::MarkAdded);
+        }
+        cx.notify();
+        id
     }
 
     /// A copy's original stays hidden, out of the counts.

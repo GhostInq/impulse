@@ -107,9 +107,11 @@ impl Stage {
                 },
             ))
         });
-        let add = button(&t(cx, key::MAP_ADD_PIN))
-            .id("map-add-mark")
-            .on_click(cx.listener(move |stage, _, _, cx| stage.board.update(cx, |board, cx| board.add_mark(target, None, cx))));
+        let add = button(&t(cx, key::MAP_ADD_PIN)).id("map-add-mark").on_click(cx.listener(move |stage, _, _, cx| {
+            stage.board.update(cx, |board, cx| {
+                board.add_mark(target, None, cx);
+            })
+        }));
         let menu = v_flex().occlude().absolute().left(px(x as f32)).top(px(y as f32)).gap(px(4.)).child(add).children(teleport);
         Some(menu.into_any_element())
     }

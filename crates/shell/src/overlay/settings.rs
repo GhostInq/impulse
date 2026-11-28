@@ -43,6 +43,13 @@ const EXTRA_ROWS: [(Slot, Target, &str, Message, Message); Slot::ALL.len()] = [
         key::OVERLAY_ZOOM_OUT_HOTKEY,
         key::OVERLAY_ZOOM_OUT_HOTKEY_HINT,
     ),
+    (
+        Slot::PinHere,
+        Target::Key { name: "pin-here", required: false },
+        "pin-here-hotkey",
+        key::OVERLAY_PIN_HERE_HOTKEY,
+        key::OVERLAY_PIN_HERE_HOTKEY_HINT,
+    ),
 ];
 
 pub struct OverlaySettings {

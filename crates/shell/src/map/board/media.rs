@@ -1,5 +1,5 @@
-//! The user's pins' pictures and clips: kept off the UI thread, then added to the pin they were asked for while its
-//! map still shows.
+//! The user's pins' pictures and clips: kept off the UI thread, then added to the pin they were asked for while the
+//! board still holds its map.
 
 use std::{path::PathBuf, rc::Rc};
 
@@ -54,10 +54,10 @@ impl Board {
         self.holds(&target).then_some(target)
     }
 
-    /// `target`'s pin while its map shows.
+    /// `target`'s pin while the board holds its map, shown or not (PIN HERE adds to a closed one).
     pub fn target_pin(&self, target: &Target) -> Option<&UserPin> {
-        let shows = self.is_open() && matches!(self.map, Load::Ready(_)) && self.id.as_ref() == Some(&target.map);
-        self.saved.pin(&target.id).filter(|_| shows)
+        let holds = matches!(self.map, Load::Ready(_)) && self.id.as_ref() == Some(&target.map);
+        self.saved.pin(&target.id).filter(|_| holds)
     }
 
     pub(super) fn holds(&self, target: &Target) -> bool {

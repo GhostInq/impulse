@@ -1,5 +1,6 @@
 //! Where the player is and which way they head, asked of the live trainer one question at a time, only while
-//! a lease is held. The heading lasts the run, so a map opened later shows the way the player last went.
+//! a lease is held or a fix is waited for. The heading lasts the run, so a map opened later shows the way the player
+//! last went.
 
 use std::{
     rc::{Rc, Weak},
@@ -7,6 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use futures::channel::oneshot;
 use gpui_kit::{Context, EventEmitter, Task};
 use model::{Failure, Frame, Session};
 
@@ -16,6 +18,9 @@ use client::map::heading::{Bearing, Heading};
 // slower each time, but soon enough for the minimap to come back with the player.
 const GIVE_UP: u32 = 3;
 const SLOWEST: Duration = Duration::from_secs(3);
+// A fix asked for once comes as soon as the trainer answers; after a failed answer it is asked again this soon.
+const AT_ONCE: Duration = Duration::from_millis(50);
+const RETRY: Duration = Duration::from_millis(250);
 
 /// The player's position in the game's own coordinates, and which way they head.
 #[derive(Clone, Copy)]
@@ -45,7 +50,11 @@ pub struct Tracker {
     // The last position and whether its height was told.
     last: Option<([f64; 3], bool)>,
     leases: Vec<Weak<Duration>>,
+    // Each waits for the next answer, placed on its own map: the heading's stays as it is.
+    waiting: Vec<(oneshot::Sender<Fix>, Frame)>,
     asking: bool,
+    // Between two questions: a fix waited for cuts the pause short.
+    sleeping: bool,
     failures: u32,
     _asks: Task<()>,
 }
@@ -60,7 +69,9 @@ impl Tracker {
             heading: Heading::default(),
             last: None,
             leases: Vec::new(),
+            waiting: Vec::new(),
             asking: false,
+            sleeping: false,
             failures: 0,
             _asks: Task::ready(()),
         }
@@ -80,20 +91,34 @@ impl Tracker {
         Lease { _every: every }
     }
 
+    /// The next fix on `frame`'s map, asked for now; none when it is off that map or the player counts as lost.
+    pub fn next_fix(&mut self, frame: &Frame, cx: &mut Context<Self>) -> oneshot::Receiver<Fix> {
+        let (sender, fix) = oneshot::channel();
+        self.waiting.push((sender, frame.clone()));
+        // A pause (up to `SLOWEST` while the player is lost) ends; a question under way is answered first.
+        if !self.asking || self.sleeping {
+            self.ask(cx);
+        }
+        fix
+    }
+
     /// The bearing as of now: it goes stale while no map asks.
     pub fn last(&self) -> Option<Fix> {
         let (position, height) = self.last.filter(|_| self.failures < GIVE_UP)?;
         Some(Fix { position, bearing: self.heading.bearing(Instant::now()), height })
     }
 
-    /// The shortest wait a held lease wants.
+    /// The shortest wait a held lease wants; at once while a fix is waited for.
     fn every(&mut self) -> Option<Duration> {
+        self.sleeping = false;
+        self.waiting.retain(|(sender, _)| !sender.is_canceled());
         self.leases.retain(|lease| lease.strong_count() > 0);
-        self.leases.iter().filter_map(Weak::upgrade).map(|every| *every).min()
+        let waited = (!self.waiting.is_empty()).then_some(AT_ONCE);
+        self.leases.iter().filter_map(Weak::upgrade).map(|every| *every).chain(waited).min()
     }
 
     fn ask(&mut self, cx: &mut Context<Self>) {
-        self.asking = true;
+        (self.asking, self.sleeping) = (true, false);
         let session = self.session.clone();
         self._asks = cx.spawn(async move |tracker, cx| {
             while let Ok(Some(every)) = tracker.update(cx, |tracker, _| tracker.every()) {
@@ -107,14 +132,20 @@ impl Tracker {
 
     /// How long to wait before asking again.
     fn answered(&mut self, answer: Result<[f64; 3], Failure>, every: Duration, cx: &mut Context<Self>) -> Duration {
-        let fix = match answer {
-            Ok(position) => placed(self.frame.as_ref(), position),
-            Err(e) => {
-                log::debug!("player position: {e}");
-                None
+        self.sleeping = true;
+        let position = answer.inspect_err(|e| log::debug!("player position: {e}")).ok();
+        if let Some(position) = position {
+            for (sender, frame) in self.waiting.drain(..) {
+                if let Some((position, height)) = placed(Some(&frame), position) {
+                    let _ = sender.send(Fix { position, bearing: None, height });
+                }
             }
-        };
-        match fix {
+        }
+        // Asked only for fixes waited for: what the maps follow stays as it was.
+        if !self.leases.iter().any(|lease| lease.strong_count() > 0) {
+            return if position.is_some() { every } else { RETRY };
+        }
+        match position.and_then(|position| placed(self.frame.as_ref(), position)) {
             Some((position, height)) => {
                 self.failures = 0;
                 let at = Instant::now();
@@ -130,6 +161,7 @@ impl Tracker {
                 if self.failures == GIVE_UP {
                     log::warn!("the trainer does not tell where the player is");
                     self.heading = Heading::default();
+                    self.waiting.clear();
                     cx.emit(Tracked::Lost);
                 }
                 (every * 2u32.saturating_pow(self.failures)).min(SLOWEST)

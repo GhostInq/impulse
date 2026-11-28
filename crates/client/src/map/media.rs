@@ -8,6 +8,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
+use image::{ExtendedColorType, codecs::jpeg::JpegEncoder};
 use sha2::{Digest, Sha256};
 
 use crate::storage;
@@ -33,6 +34,7 @@ const STILL_OR_SOUND: [&[u8]; 16] = [
     b"avif",
 ];
 const HEAD: usize = 12;
+const SHOT_QUALITY: u8 = 85;
 
 /// Whether the kept `name` is a clip.
 pub fn is_clip(name: &str) -> bool {
@@ -72,6 +74,16 @@ pub fn import(dir: &Path, file: &Path) -> Result<String> {
         staged.publish(&kept).or_else(|e| if kept.is_file() { Ok(()) } else { Err(e) })?;
     }
     Ok(name)
+}
+
+/// A shot of the game (BGRA rows, top-down) as the JPEG a pin keeps. Blocking.
+pub fn jpeg(width: u32, height: u32, bgra: &[u8]) -> Result<Vec<u8>> {
+    let rgb: Vec<u8> = bgra.as_chunks::<4>().0.iter().flat_map(|&[b, g, r, _]| [r, g, b]).collect();
+    let mut jpeg = Vec::new();
+    JpegEncoder::new_with_quality(&mut jpeg, SHOT_QUALITY)
+        .encode(&rgb, width, height, ExtendedColorType::Rgb8)
+        .context("encode the shot")?;
+    Ok(jpeg)
 }
 
 /// The kept `name`'s bytes. Blocking.
@@ -124,6 +136,8 @@ mod tests {
         assert!(import(&kept, &picked).is_err());
         assert_eq!(fs::read_dir(&kept).unwrap().count(), 2, "a refused file leaves nothing");
         assert_eq!(path(&kept, "..\\..\\x.png"), kept.join("x.png"));
+        let shot = super::jpeg(2, 1, &[0, 0, 255, 255, 255, 0, 0, 255]).unwrap();
+        assert!(keep(&kept, &shot).unwrap().ends_with(".jpg"));
         fs::remove_dir_all(dir).unwrap();
     }
 }

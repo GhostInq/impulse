@@ -3,7 +3,8 @@
 //! leaves them over the game.
 
 use std::{
-    rc::Rc,
+    cell::{Cell, RefCell},
+    rc::{Rc, Weak},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -53,6 +54,52 @@ pub struct InGame {
     ready: bool,
     size: Option<(u32, u32)>,
     reader: Option<Task<()>>,
+    // The canvas's: a shot of an older canvas never touches the current one.
+    veil: Option<Rc<Veil>>,
+}
+
+/// A canvas's layers hidden while shots of the game are taken (`shots`); each running mirror's last frame shows its
+/// layer again after the last.
+struct Veil {
+    layers: Weak<dyn Layers>,
+    shots: Cell<u32>,
+    last: RefCell<Vec<(u32, Rect, Texture)>>,
+}
+
+/// A shot of the game under way: its canvas's layers show again once the last is dropped, whatever ended it.
+pub(super) struct Veiled(Rc<Veil>);
+
+impl Drop for Veiled {
+    fn drop(&mut self) {
+        let Veiled(veil) = self;
+        veil.shots.set(veil.shots.get() - 1);
+        let Some(layers) = veil.layers.upgrade().filter(|_| veil.shots.get() == 0) else { return };
+        for &(layer, rect, texture) in veil.last.borrow().iter() {
+            layers.show(layer, rect, texture);
+        }
+    }
+}
+
+impl Veil {
+    /// Keeps `layer`'s frame: whether it may show now.
+    fn keep(&self, layer: u32, rect: Rect, texture: Texture) -> bool {
+        let mut last = self.last.borrow_mut();
+        last.retain(|(kept, ..)| *kept != layer);
+        last.push((layer, rect, texture));
+        self.shots.get() == 0
+    }
+}
+
+/// Held by a mirror's callback: its layer's last frame goes with it.
+struct Mirrored {
+    layer: u32,
+    veil: Rc<Veil>,
+}
+
+impl Drop for Mirrored {
+    fn drop(&mut self) {
+        self.veil.last.borrow_mut().retain(|(layer, ..)| *layer != self.layer);
+    }
 }
 
 impl EventEmitter<InGameEvent> for InGame {}
@@ -97,6 +144,7 @@ impl InGame {
             ready: false,
             size: None,
             reader,
+            veil: None,
         }
     }
 
@@ -130,15 +178,31 @@ impl InGame {
     /// A window's frame callback: each frame goes into the game as `layer` at `at` in its client area; `first` runs
     /// after the first one.
     pub(super) fn frames(&self, layer: u32, (x, y): (i32, i32), first: impl FnOnce() + 'static) -> Option<Box<dyn FnMut(MirrorFrame)>> {
-        let layers = Rc::downgrade(self.layers.as_ref()?);
+        let (layers, veil) = (Rc::downgrade(self.layers.as_ref()?), self.veil.clone()?);
+        let mirrored = Mirrored { layer, veil };
         let mut first = Some(first);
         Some(Box::new(move |MirrorFrame { handle, width, height, adapter }| {
             let Some(layers) = layers.upgrade() else { return };
-            layers.show(layer, Rect { x, y, width, height }, Texture { handle, width, height, adapter });
+            let (rect, texture) = (Rect { x, y, width, height }, Texture { handle, width, height, adapter });
+            if !mirrored.veil.keep(layer, rect, texture) {
+                return;
+            }
+            layers.show(layer, rect, texture);
             if let Some(first) = first.take() {
                 first();
             }
         }))
+    }
+
+    /// Hides the canvas's layers for a shot of the game; none without a canvas.
+    pub(super) fn veil(&self) -> Option<Veiled> {
+        let (layers, veil) = (self.layers.as_ref()?, self.veil.as_ref()?);
+        veil.shots.set(veil.shots.get() + 1);
+        // Every layer: one whose mirror is being replaced still shows its old frame.
+        for layer in [HUD_LAYER, GLANCE_LAYER] {
+            layers.hide(layer);
+        }
+        Some(Veiled(veil.clone()))
     }
 
     /// A window's cursor callback: the cursor it wants shows over `layer` in the game.
@@ -206,7 +270,7 @@ impl InGame {
     fn drop_canvas(&mut self, cx: &mut Context<Self>) {
         self.generation += 1;
         let had = self.layers.take().is_some();
-        (self.ready, self.size) = (false, None);
+        (self.ready, self.size, self.veil) = (false, None, None);
         if had {
             cx.emit(InGameEvent::Gone);
         }
@@ -218,7 +282,10 @@ impl InGame {
             // Not a game its source draws in, or another host holds the overlay: the HUD stays over the game.
             Err(failure) => return log::debug!("no in-game overlay: {:?}", failure.kind),
         };
-        self.layers = Some(layers.into());
+        let layers: Rc<dyn Layers> = layers.into();
+        let last = RefCell::default();
+        self.veil = Some(Rc::new(Veil { layers: Rc::downgrade(&layers), shots: Cell::new(0), last }));
+        self.layers = Some(layers);
         self.reader = Some(cx.spawn(async move |in_game, cx| {
             while let Some(event) = events.next().await {
                 if in_game.update(cx, |in_game, cx| in_game.canvas_event(generation, event, cx)).is_err() {
