@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result, anyhow, ensure};
+use anyhow::{Result, anyhow, ensure};
 use model::{Failure, FailureKind};
 use sha2::{Digest, Sha256};
 
@@ -50,14 +50,36 @@ pub fn ensure(data_dir: &Path, wand_caches: &[PathBuf], url: &str, hash: &str) -
 }
 
 fn download(url: &str, hash: &str) -> Result<Vec<u8>> {
-    let response = fetch::get(url, None).context(Failure::new(FailureKind::Offline))?;
-    if response.status == 404 {
-        let missing = Failure::new(FailureKind::NotFound).saying(text(TRAINER_FILE_MISSING));
-        return Err(anyhow!("GET {url}: status 404 ({})", response.edge).context(missing));
+    let (mut answers, mut missing, mut offline) = (Vec::new(), true, false);
+    for named in [false, true] {
+        let how = if named { "named" } else { "bare" };
+        let response = match if named { fetch::get(url, None) } else { fetch::get_bare(url) } {
+            Ok(response) => response,
+            Err(e) => {
+                (missing, offline) = (false, true);
+                answers.push(format!("{how}: {}", e.root_cause()));
+                continue;
+            }
+        };
+        let good = response.status == 200 && sha256(&response.body) == hash;
+        let note = match (response.status, good, response.edge.as_str()) {
+            (200, false, _) => " (not the trainer's hash)".to_owned(),
+            (_, _, "") => String::new(),
+            (_, _, edge) => format!(" ({edge})"),
+        };
+        answers.push(format!("status {} {how}{note}", response.status));
+        if good {
+            return Ok(response.body);
+        }
+        missing &= response.status == 404;
     }
-    ensure!(response.status == 200, "GET {url}: status {} ({})", response.status, response.edge);
-    ensure!(sha256(&response.body) == hash, "the downloaded trainer does not match its hash");
-    Ok(response.body)
+    let why = anyhow!("GET {url}: {}", answers.join("; "));
+    let failure = match (missing, offline) {
+        (true, _) => Failure::new(FailureKind::NotFound).saying(text(TRAINER_FILE_MISSING)),
+        (_, true) => Failure::new(FailureKind::Offline),
+        _ => return Err(why),
+    };
+    Err(why.context(failure))
 }
 
 /// Wand names its copy `Trainer_<id>_<first ten of the hash>.dll`; only one that hashes to `hash` counts.

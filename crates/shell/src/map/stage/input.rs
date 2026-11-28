@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{rc::Rc, time::Duration};
 
 use gpui_kit::{
     App, Context, Div, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ScrollEvent, Stateful, Task, Window, prelude::*, px,
@@ -6,15 +6,12 @@ use gpui_kit::{
 use model::{Map, Point};
 
 use super::{
-    Drag, Stage,
+    Drag, Moving, Stage,
     camera::{Camera, Pixel},
-    paint::mark_order,
+    marks::{drawn_at, mark_order},
     pins,
 };
-use crate::map::{
-    board::plane,
-    keys::{PanDown, PanLeft, PanRight, PanUp, ZoomIn, ZoomOut},
-};
+use crate::map::keys::{PanDown, PanLeft, PanRight, PanUp, ZoomIn, ZoomOut};
 
 // Zoom levels per wheel line.
 const WHEEL: f64 = 0.12;
@@ -69,11 +66,17 @@ impl Stage {
     fn pressed(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.focus.focus(window, cx);
         (self.shown.target, self.layers_open) = (None, false);
-        if event.click_count == 2 {
-            self.zoom(GROUP_ZOOM, self.pixel(event.position), cx);
+        let pixel = self.pixel(event.position);
+        // Even right after a click on it: Alt on a user's pin moves it.
+        let moving = self.camera.filter(|_| event.modifiers.alt).and_then(|camera| {
+            let (id, tip) = self.hit_mark_at(&camera, pixel, cx)?;
+            Some(Moving { id, cursor: event.position, grab: (tip.0 - pixel.0, tip.1 - pixel.1) })
+        });
+        if event.click_count == 2 && moving.is_none() {
+            self.zoom(GROUP_ZOOM, pixel, cx);
             return;
         }
-        self.drag = Some(Drag { last: event.position, moved: false });
+        self.drag = Some(Drag { last: event.position, moved: false, moving });
         cx.notify();
     }
 
@@ -97,16 +100,23 @@ impl Stage {
     /// `over`: the cursor is on the map itself, not on something over it.
     pub(super) fn moved(&mut self, event: &MouseMoveEvent, over: bool, cx: &mut Context<Self>) {
         let (Some(camera), Some(map)) = (self.camera, self.map(cx)) else { return };
+        let pixel = self.pixel(event.position);
         if let Some(drag) = &mut self.drag {
             // Released outside the window: the up never came.
             if event.pressed_button != Some(MouseButton::Left) {
                 self.drag = None;
+                cx.notify();
                 return;
             }
             let by = event.position - drag.last;
             drag.moved |= by.x.abs().max(by.y.abs()) > px(CLICK_SLACK);
             if drag.moved {
                 drag.last = event.position;
+                if let Some(moving) = &mut drag.moving {
+                    moving.cursor = event.position;
+                    cx.notify();
+                    return;
+                }
                 self.follow = false;
                 if let Some(camera) = &mut self.camera {
                     camera.pan((by.x.into(), by.y.into()));
@@ -115,20 +125,20 @@ impl Stage {
             }
             return;
         }
-        let pixel = self.pixel(event.position);
         let mark = self.hit_mark(&camera, pixel, cx).filter(|_| over);
         let hit = self.hit(&map, &camera, pixel, cx).filter(|_| mark.is_none());
         let hovered = hit.filter(|marker| over && marker.count == 1).map(|marker| marker.pin);
         if self.shown.hovered_mark != mark {
-            self.shown.hovered_mark = mark;
+            self.shown.hovered_mark = mark.clone();
             cx.notify();
         }
         let saved = self.board.read(cx).saved.clone();
-        let region = if over && hit.is_none() && mark.is_none() && saved.regions {
+        let view = saved.view();
+        let region = if over && hit.is_none() && mark.is_none() && view.regions {
             let at = camera.to_plane(pixel, self.size());
             map.regions
                 .iter()
-                .position(|region| !saved.hidden_regions.contains(&region.id) && region.outlines.iter().any(|ring| inside(at, ring)))
+                .position(|region| !view.hidden_regions.contains(&region.id) && region.outlines.iter().any(|ring| inside(at, ring)))
         } else {
             None
         };
@@ -160,17 +170,27 @@ impl Stage {
     }
 
     pub(super) fn released(&mut self, event: &MouseUpEvent, cx: &mut Context<Self>) {
-        let Some(drag) = self.drag.take().filter(|_| event.button == MouseButton::Left) else { return };
-        let (Some(camera), Some(map)) = (self.camera, self.map(cx)) else { return };
-        if drag.moved {
+        if event.button != MouseButton::Left {
             return;
         }
-        let pixel = self.pixel(event.position);
-        let (selected, open) = (self.board.read(cx).selected, self.board.read(cx).mark);
-        if let Some(mark) = self.hit_mark(&camera, pixel, cx) {
+        let Some(drag) = self.drag.take() else { return };
+        let (Some(camera), Some(map)) = (self.camera, self.map(cx)) else { return };
+        let (pixel, by) = (self.pixel(event.position), event.position - drag.last);
+        // The last move may come short of the release.
+        if drag.moved || by.x.abs().max(by.y.abs()) > px(CLICK_SLACK) {
+            if let Some(mut moving) = drag.moving {
+                moving.cursor = event.position;
+                let at = camera.to_plane(self.tip(&moving), self.size());
+                self.board.update(cx, |board, cx| board.move_mark(&moving.id, at, cx));
+            }
+            return;
+        }
+        let (selected, open) = (self.board.read(cx).selected, self.board.read(cx).mark.clone());
+        // An Alt press that did not move is a click on its pin, wherever the camera went since.
+        if let Some(mark) = drag.moving.map(|moving| moving.id).or_else(|| self.hit_mark(&camera, pixel, cx)) {
             // The open one again: closed.
             return self.board.update(cx, |board, cx| {
-                if open == Some(mark) {
+                if open.as_ref() == Some(&mark) {
                     board.deselect(cx);
                 } else {
                     board.select_mark(mark, false, cx);
@@ -200,10 +220,17 @@ impl Stage {
         pins::hit(&markers, &lifted, camera, self.size(), pixel)
     }
 
-    fn hit_mark(&self, camera: &Camera, pixel: Pixel, cx: &App) -> Option<usize> {
-        let (board, size) = (self.board.read(cx), self.size());
-        mark_order(&board.saved, board.mark).rev().find(|&index| {
-            pins::on_head(camera.to_view(plane(board.saved.marks[index].at), size), self.mark_look(index, board.mark).scale(), pixel)
+    fn hit_mark(&self, camera: &Camera, pixel: Pixel, cx: &App) -> Option<Rc<str>> {
+        self.hit_mark_at(camera, pixel, cx).map(|(id, _)| id)
+    }
+
+    /// The topmost user's pin under `pixel` as drawn, and its tip on the view.
+    fn hit_mark_at(&self, camera: &Camera, pixel: Pixel, cx: &App) -> Option<(Rc<str>, Pixel)> {
+        let (board, size, moving) = (self.board.read(cx), self.size(), self.moving(camera));
+        let open = board.mark.as_deref();
+        mark_order(&board.saved, open).rev().find_map(|mark| {
+            let tip = camera.to_view(drawn_at(mark, moving.as_ref()), size);
+            pins::on_head(tip, self.mark_look(&mark.id, open).scale(), pixel).then(|| (mark.id.clone(), tip))
         })
     }
 }

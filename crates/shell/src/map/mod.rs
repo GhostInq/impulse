@@ -101,7 +101,7 @@ impl MapView {
         })
         .detach();
         let sidebar = cx.new(|cx| Sidebar::new(maps.clone(), window, cx));
-        let card = cx.new(|cx| Card::new(board.clone(), Media::Videos.dir(paths), window, cx));
+        let card = cx.new(|cx| Card::new(board.clone(), Media::Videos.dir(paths), paths.map_media(), window, cx));
         let linker = cx.new(|cx| TitlePicker::new(maps.clone(), library.clone(), cx));
         // The camera lives with the stage.
         let camera = stage.downgrade();
@@ -130,9 +130,10 @@ impl MapView {
         if !self.maps.read(cx).is_open(cx) {
             return;
         }
+        // First: what the card's fields hold goes to the map while it still shows.
+        self.card.update(cx, |card, cx| card.hide(window, cx));
         self.maps.update(cx, |maps, cx| maps.close(cx));
         self.stage.update(cx, |stage, _| stage.hide(window));
-        self.card.update(cx, |card, _| card.hide(window));
         self.sidebar.update(cx, |sidebar, _| sidebar.hide(window));
     }
 
@@ -204,11 +205,15 @@ impl MapView {
     }
 
     /// Escape: the innermost open thing closes first, the map last.
-    fn back(&mut self, _: &CloseMap, _: &mut Window, cx: &mut Context<Self>) {
-        let closed = self.card.update(cx, |card, cx| card.close_top(cx))
-            || self.stage.update(cx, |stage, cx| stage.close_top(cx))
-            || self.board.update(cx, |board, cx| board.deselect(cx));
-        if !closed {
+    fn back(&mut self, _: &CloseMap, window: &mut Window, cx: &mut Context<Self>) {
+        let closed = self.card.update(cx, |card, cx| card.close_top(cx)) || self.stage.update(cx, |stage, cx| stage.close_top(cx));
+        if closed {
+            return;
+        }
+        // A card's field may have held the focus: the next Escape must still reach the map.
+        if self.board.update(cx, |board, cx| board.deselect(cx)) {
+            self.stage.update(cx, |stage, cx| stage.take_focus(window, cx));
+        } else {
             cx.emit(MapEvent::Close);
         }
     }

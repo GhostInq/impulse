@@ -3,6 +3,24 @@
 This file is the source of truth for release notes: the release workflow publishes the newest section and the app shows it.
 The newest entry must match the version in `Cargo.toml`. A `-pre` build reads the section of its version.
 
+## [0.7.0] - 2026-11-28
+
+### Features
+
+- PIN HERE (Settings, OVERLAY; Ctrl+Shift+P) puts one of your pins where you stand, with a screenshot of the game on it. The in-game overlay hides for the shot. It works while the game's map is open or the HUD's minimap shows it.
+- Your pins take pictures and videos: ADD MEDIA on a pin's card, or paste a picture or files into its fields. They are copies kept with your map data, so clearing the caches leaves them.
+- A pin of yours shows its X Y Z on its card: type a position, height included. Hold Alt and drag it to move it on the map; its height stays.
+- HIDE THIS PIN takes a map's pin off the map and out of its group's count; HIDDEN PINS in the sidebar brings it back. MOVE copies a map's pin into your pins, with its picture and clip, and hides the original, for a pin a game update moved: put the copy where the place really is. Its FOUND counts for the original.
+- HEIGHTS NEARBY (map layers) shows how far above or below you the pins near you are, when the trainer tells your height. GROUP CLOSE PINS can group them ON THE MINIMAP TOO.
+- Your pins and found marks are kept per map in a new format. A map's first open in 0.7.0 takes over the older file and leaves it as it was.
+- Thai (Settings, APP, LANGUAGE).
+- The 0.6.1 and 0.7.0 map texts in every language.
+
+### Fixes
+
+- On a map whose game's up axis is not z, TELEPORT to a pin lands on the pin, and the Castor Woods map shows where you are.
+- Downloads on a slow connection (an update, a trainer) no longer fail after two minutes with "timeout: global": only one that stops for 30 s is given up. (#40)
+
 ## [0.6.1] - 2026-11-26
 
 ### Features

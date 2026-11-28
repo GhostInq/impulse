@@ -15,6 +15,7 @@ use super::{
     docks::{self, Docks, Spec},
     glance::Glance,
     in_game::InGame,
+    shot,
     warning::{Closed, Warning, chip},
 };
 use crate::{
@@ -135,6 +136,8 @@ pub struct Hud {
     minimap: Entity<Minimap>,
     // The HUD window over the game while Impulse is behind it.
     _glance: Entity<Glance>,
+    // PIN HERE's shots hide its layers.
+    in_game: Entity<InGame>,
     warning: Entity<Warning>,
     over: bool,
     focus: FocusHandle,
@@ -163,7 +166,7 @@ impl Hud {
     ) -> Self {
         let docks = cx.new(|_| Docks::load(paths, &DOCKS));
         let live_map = maps.read(cx).live_map().clone();
-        let glance = cx.new(|cx| Glance::new(&layer, in_game, docks.clone(), live_map.clone(), settings, cx));
+        let glance = cx.new(|cx| Glance::new(&layer, in_game.clone(), docks.clone(), live_map.clone(), settings, cx));
         let minimap = cx.new(|cx| Minimap::new(live_map.clone(), cx));
         let warning = cx.new(|cx| Warning::new(settings.clone(), cx));
         cx.observe(&warning, |_, _, cx| cx.notify()).detach();
@@ -196,6 +199,7 @@ impl Hud {
             Slot::Minimap => hud.minimap_key(cx),
             Slot::ZoomIn => hud.maps.update(cx, |maps, cx| maps.zoom_minimap(ZOOM_STEP, cx)),
             Slot::ZoomOut => hud.maps.update(cx, |maps, cx| maps.zoom_minimap(-ZOOM_STEP, cx)),
+            Slot::PinHere => hud.pin_here(cx),
         })
         .detach();
         cx.observe_in(&docks, window, |hud, _, window, cx| {
@@ -249,6 +253,7 @@ impl Hud {
             docks,
             minimap,
             _glance: glance,
+            in_game,
             warning,
             over: false,
             focus: cx.focus_handle(),
@@ -289,6 +294,13 @@ impl Hud {
     fn dock_minimap(&self, cx: &mut Context<Self>) {
         let wanted = self.docks.read(cx).is_shown(&MINIMAP_DOCK);
         self.maps.update(cx, |maps, cx| maps.set_minimap(wanted, cx));
+    }
+
+    /// The map places the pin; the shot is the overlay's, given to it, so the map never names the overlay.
+    fn pin_here(&mut self, cx: &mut Context<Self>) {
+        let Some(pid) = self.runs.read(cx).pid() else { return };
+        let in_game = self.in_game.clone();
+        self.maps.update(cx, |maps, cx| maps.pin_here(|cx| shot::shot(pid, &in_game, cx), cx));
     }
 
     /// Only a live game with a map has a minimap to toggle.

@@ -71,6 +71,7 @@ fn a_system_tag_matches_ours_by_language() {
     assert_eq!(closest("tr-TR"), Some(TURKISH));
     assert_eq!(closest("ru-RU"), Some(RUSSIAN));
     assert_eq!(closest("uk-UA"), Some(UKRAINIAN));
+    assert_eq!(closest("th-TH"), Some(THAI));
     assert_eq!(closest("xx-YY"), None);
 }
 

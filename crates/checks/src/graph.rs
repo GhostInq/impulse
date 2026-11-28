@@ -14,6 +14,7 @@ use crate::{root, verdict};
 /// Each package and the packages of ours it names, in any dependency section.
 const GRAPH: &[(&str, &[&str])] = &[
     ("agent", &["model", "pe"]),
+    ("capture", &[]),
     ("checks", &[]),
     ("client", &["agent", "disk", "fetch", "launchers", "model"]),
     ("disk", &[]),
@@ -28,7 +29,7 @@ const GRAPH: &[(&str, &[&str])] = &[
     ("plugins", &["disk", "fetch", "model", "sdk"]),
     ("remote", &["client"]),
     ("sdk", &[]),
-    ("shell", &["client", "disk", "i18n", "journal", "keyhook", "model", "sound", "topmost", "tray", "updater", "video"]),
+    ("shell", &["capture", "client", "disk", "i18n", "journal", "keyhook", "model", "sound", "topmost", "tray", "updater", "video"]),
     ("sound", &[]),
     ("topmost", &[]),
     ("tray", &[]),

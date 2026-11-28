@@ -3,10 +3,12 @@
 
 mod camera;
 mod input;
+mod marks;
 mod motion;
 mod overlays;
 mod paint;
 mod pins;
+mod rise;
 mod tiles;
 
 use crate::ui::{
@@ -40,6 +42,16 @@ use tiles::Tiles;
 struct Drag {
     last: gpui_kit::Point<Pixels>,
     moved: bool,
+    // Alt on one of the user's pins: it moves, not the map.
+    moving: Option<Moving>,
+}
+
+/// A pin of the user's on its way: its tip keeps its offset from the cursor on the view, under a moving camera too.
+struct Moving {
+    id: Rc<str>,
+    // On the window: the stage may move under it.
+    cursor: gpui_kit::Point<Pixels>,
+    grab: Pixel,
 }
 
 /// What was worked out from the shown map's pins or points at them: forgotten with the map.
@@ -47,15 +59,17 @@ struct Drag {
 struct Shown {
     // By the zoom step they were grouped for.
     markers: Option<(i32, Rc<Vec<Marker>>)>,
-    // Made once, not per frame: each label's line, each region ring's extent (a frame skips those off the view), group counts.
+    // Made once, not per frame: each label's line, each region ring's extent (a frame skips those off the view), group
+    // counts, rises.
     labels: Vec<SharedString>,
     regions: Vec<Vec<Option<(Point, Point)>>>,
     counts: HashMap<usize, SharedString>,
+    rises: HashMap<i64, SharedString>,
     hovered: Option<usize>,
     // The hovered pin once the cursor has rested on it.
     chip: Option<usize>,
     hovered_region: Option<usize>,
-    hovered_mark: Option<usize>,
+    hovered_mark: Option<Rc<str>>,
     // Where a right click opened its menu.
     target: Option<Point>,
 }
@@ -133,11 +147,11 @@ impl Stage {
                 stage.hover(None, cx);
             }
             BoardEvent::Selected => (stage.shown.target, stage.shown.hovered_mark) = (None, None),
-            BoardEvent::MarkAdded => {}
+            BoardEvent::MarkAdded | BoardEvent::MarkMoved => {}
             BoardEvent::Bring { to, close } => {
                 let board = board.read(cx);
                 if let Load::Ready(map) = &board.map {
-                    stage.bring(*to, *close, &board.saved.tile_set_of(map).1.tiles);
+                    stage.bring(*to, *close, &board.saved.view().tile_set_of(map).1.tiles);
                 }
             }
         })
@@ -214,9 +228,10 @@ impl Stage {
             self.drop_tiles();
         }
         self.stale.extend(self.images.clear());
-        (self.shown, self.glide, self.clock) = (Shown::of(map), None, None);
+        // A gesture begun on another map ends with it.
+        (self.shown, self.glide, self.clock, self.drag) = (Shown::of(map), None, None, None);
         if first {
-            self.camera = board.saved.view.map(|(x, y, span)| Camera { center: Point { x, y }, span });
+            self.camera = board.saved.view().camera.map(|(x, y, span)| Camera { center: Point { x, y }, span });
         }
     }
 

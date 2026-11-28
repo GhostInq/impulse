@@ -1,18 +1,25 @@
 //! The shown map and what the user did with it, shared by the stage, the sidebar and the card.
 //! They observe it; it notifies on what a person does (clicks, typing, the player's position), never per frame.
 
+mod marks;
+mod media;
 mod teleport;
 
 use std::{mem, path::PathBuf, rc::Rc, time::Duration};
 
 use anyhow::Result;
-use client::map::{
-    heading::Bearing,
-    state::{self, Mark, PALETTE, Saved},
+use client::{
+    map::{
+        heading::Bearing,
+        state::{Saved, Tally, View},
+    },
+    storage::Paths,
 };
 use futures::{StreamExt, stream::BoxStream};
 use gpui_kit::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, WeakEntity};
 use model::{Failure, Icon, Locale, Map, Point, Ref, Snapshot};
+
+pub use media::{Attach, Target};
 
 use super::{group, icons::Icons, markers::GroupIcon};
 use crate::{
@@ -35,6 +42,8 @@ pub enum BoardEvent {
     Selected,
     /// The new mark is already open.
     MarkAdded,
+    /// The open mark's place changed: dragged or typed.
+    MarkMoved,
     /// The view should show `to`; `close`: near enough to tell pins apart.
     Bring { to: Point, close: bool },
 }
@@ -42,7 +51,7 @@ pub enum BoardEvent {
 impl EventEmitter<BoardEvent> for Board {}
 
 pub struct Board {
-    state_dir: PathBuf,
+    paths: Paths,
     // The shown map's, which its saved state is kept under, and the locale it was asked in: boards share a copy only
     // when they asked for the same.
     id: Option<Ref>,
@@ -56,14 +65,14 @@ pub struct Board {
     // Shared so a frame can hold it while it paints.
     pub saved: Rc<Saved>,
     // Pins per category and group: all of them and the found ones.
-    pub counts: Vec<Vec<usize>>,
-    pub found_counts: Vec<Vec<usize>>,
+    /// By category and group (`Saved::tally`).
+    pub tally: Vec<Vec<Tally>>,
     // Each pin's name, group, category and description, lowercased; made on the map's first search.
     haystacks: Vec<String>,
     query: String,
     pub selected: Option<usize>,
     // The user's own pin whose card is open.
-    pub mark: Option<usize>,
+    pub mark: Option<Rc<str>>,
     run: Option<Run>,
     pub player: Option<[f64; 3]>,
     pub bearing: Option<Bearing>,
@@ -90,18 +99,18 @@ pub struct Shared {
 
 impl Board {
     /// `art`: the pictures' cache, which icon sheets come from.
-    pub fn new(state_dir: PathBuf, art: PathBuf) -> Self {
-        Self::with(state_dir, art, EVERY, true)
+    pub fn new(paths: Paths, art: PathBuf) -> Self {
+        Self::with(paths, art, EVERY, true)
     }
 
     /// The minimap's: it follows the player closely and never writes the user's state.
-    pub fn live(state_dir: PathBuf, art: PathBuf) -> Self {
-        Self::with(state_dir, art, LIVE_EVERY, false)
+    pub fn live(paths: Paths, art: PathBuf) -> Self {
+        Self::with(paths, art, LIVE_EVERY, false)
     }
 
-    fn with(state_dir: PathBuf, art: PathBuf, every: Duration, saves: bool) -> Self {
+    fn with(paths: Paths, art: PathBuf, every: Duration, saves: bool) -> Self {
         Self {
-            state_dir,
+            paths,
             id: None,
             locale: None,
             map: Load::Pending,
@@ -109,8 +118,7 @@ impl Board {
             art,
             settled: false,
             saved: Rc::default(),
-            counts: Vec::new(),
-            found_counts: Vec::new(),
+            tally: Vec::new(),
             haystacks: Vec::new(),
             query: String::new(),
             selected: None,
@@ -183,16 +191,11 @@ impl Board {
         let first = !matches!(self.map, Load::Ready(_));
         let retiled = !matches!(&self.map, Load::Ready(shown) if shown.tile_sets == map.tile_sets);
         if first {
-            let saved = self.id.as_ref().and_then(|id| state::load(&self.state_dir, id));
-            self.saved = Rc::new(saved.unwrap_or_else(|| Saved::first(&map)));
+            self.saved = Rc::new(self.id.as_ref().map_or_else(Saved::default, |id| Saved::load(&self.paths, id, &map)));
         }
         // Titles an older build saved turn into ids once a copy names them.
-        if !self.saved.hidden_labels.is_empty() {
-            Rc::make_mut(&mut self.saved).resolve(&map.regions);
-        }
-        self.counts = map.categories.iter().map(|category| vec![0; category.groups.len()]).collect();
-        for pin in &map.pins {
-            self.counts[pin.group.0][pin.group.1] += 1;
+        if !self.saved.view().hidden_labels.is_empty() {
+            self.saved_mut().view_mut().resolve(&map.regions);
         }
         (self.map, self.selected, self.mark, self.haystacks) = (Load::Ready(map), None, None, Vec::new());
         self.index();
@@ -225,10 +228,10 @@ impl Board {
         }
     }
 
-    /// Keeps the user's state of the map on screen; blocking, so saves land in order (small, on a click).
-    pub fn save(&self) {
-        if let Some(id) = self.id.as_ref().filter(|_| self.saves && matches!(self.map, Load::Ready(_))) {
-            state::store(&self.state_dir, id, &self.saved);
+    /// Keeps what changed of the user's state of the map on screen; blocking, so saves land in order (small, on a click).
+    pub fn save(&mut self) {
+        if self.saves && matches!(self.map, Load::Ready(_)) {
+            self.saved_mut().flush();
         }
     }
 
@@ -240,13 +243,20 @@ impl Board {
         cx.notify();
     }
 
-    pub fn saved_mut(&mut self) -> &mut Saved {
+    fn saved_mut(&mut self) -> &mut Saved {
         Rc::make_mut(&mut self.saved)
     }
 
+    /// The stage's camera, kept with the map at the next save.
+    pub fn keep_camera(&mut self, camera: Option<(f64, f64, f64)>) {
+        if self.saved.view().camera != camera {
+            self.saved_mut().view_mut().camera = camera;
+        }
+    }
+
     /// Changes what the user set (filters, layers) and keeps it.
-    pub fn filter(&mut self, change: impl FnOnce(&mut Saved), cx: &mut Context<Self>) {
-        change(self.saved_mut());
+    pub fn filter(&mut self, change: impl FnOnce(&mut View), cx: &mut Context<Self>) {
+        change(self.saved_mut().view_mut());
         self.filtered(cx);
     }
 
@@ -270,29 +280,28 @@ impl Board {
     pub fn toggle_found(&mut self, pin: usize, cx: &mut Context<Self>) {
         let Load::Ready(map) = &self.map else { return };
         let id = map.pins[pin].id.clone();
-        let found = &mut self.saved_mut().found;
-        if !found.remove(&id) {
-            found.insert(id);
-        }
+        self.toggle_found_id(&id, cx);
+    }
+
+    fn toggle_found_id(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.saved_mut().toggle_found(id);
         self.recount();
         self.filtered(cx);
     }
 
     fn recount(&mut self) {
-        let Load::Ready(map) = &self.map else { return };
-        self.found_counts = self.counts.iter().map(|groups| vec![0; groups.len()]).collect();
-        for pin in map.pins.iter().filter(|pin| self.saved.found.contains(&pin.id)) {
-            self.found_counts[pin.group.0][pin.group.1] += 1;
+        if let Load::Ready(map) = &self.map {
+            self.tally = self.saved.tally(map);
         }
     }
 
-    /// Whether pin `index` shows; a search reaches hidden groups too.
+    /// Whether pin `index` shows; a search reaches hidden groups too, never a hidden pin.
     pub fn shows(&self, map: &Map, index: usize) -> bool {
-        let (pin, saved) = (&map.pins[index], &self.saved);
-        if saved.unfound_only && saved.found.contains(&pin.id) || saved.teleport_only && pin.position.is_none() {
+        let (pin, view) = (&map.pins[index], self.saved.view());
+        if self.saved.hidden(&pin.id) || view.unfound_only && self.saved.found(&pin.id) || view.teleport_only && pin.position.is_none() {
             return false;
         }
-        if self.query.is_empty() { !saved.hidden.contains(&group(map, pin).id) } else { self.haystacks[index].contains(&self.query) }
+        if self.query.is_empty() { !view.hidden_groups.contains(&group(map, pin).id) } else { self.haystacks[index].contains(&self.query) }
     }
 
     /// Whether pin `index` is found by its name (its haystack's first line), not its group or description.
@@ -319,17 +328,6 @@ impl Board {
         }
     }
 
-    /// Opens a mark's card; `bring` also centers the view on it.
-    pub fn select_mark(&mut self, index: usize, bring: bool, cx: &mut Context<Self>) {
-        let Some(mark) = self.saved.marks.get(index) else { return };
-        if bring {
-            cx.emit(BoardEvent::Bring { to: plane(mark.at), close: false });
-        }
-        (self.mark, self.selected) = (Some(index), None);
-        cx.emit(BoardEvent::Selected);
-        cx.notify();
-    }
-
     /// Closes the open card; false when none was open.
     pub fn deselect(&mut self, cx: &mut Context<Self>) -> bool {
         let open = self.selected.is_some() || self.mark.is_some();
@@ -339,41 +337,6 @@ impl Board {
             cx.notify();
         }
         open
-    }
-
-    /// One of the user's pins where the player stands, which keeps the player's game position.
-    pub fn mark_player(&mut self, cx: &mut Context<Self>) {
-        let (Load::Ready(map), Some(player)) = (&self.map, self.player.filter(|_| self.here)) else { return };
-        let Some(at) = map.frame.as_ref().map(|frame| frame.to_map(player)) else { return };
-        self.add_mark(at, Some(player), cx);
-    }
-
-    pub fn add_mark(&mut self, at: Point, position: Option<[f64; 3]>, cx: &mut Context<Self>) {
-        let saved = self.saved_mut();
-        let count = saved.marks.len();
-        let color = PALETTE[count % PALETTE.len()];
-        saved.marks.push(Mark { at: (at.x, at.y), position, name: String::new(), note: String::new(), color });
-        saved.marks_shown = true;
-        self.select_mark(count, false, cx);
-        self.save();
-        cx.emit(BoardEvent::MarkAdded);
-    }
-
-    pub fn delete_mark(&mut self, index: usize, cx: &mut Context<Self>) {
-        self.saved_mut().marks.remove(index);
-        self.mark = None;
-        self.save();
-        cx.emit(BoardEvent::Selected);
-        cx.notify();
-    }
-
-    /// Changes the open mark; the caller saves once the edit is done.
-    pub fn edit_mark(&mut self, edit: impl FnOnce(&mut Mark), cx: &mut Context<Self>) {
-        let Some(index) = self.mark else { return };
-        if let Some(mark) = self.saved_mut().marks.get_mut(index) {
-            edit(mark);
-            cx.notify();
-        }
     }
 
     pub fn set_run(&mut self, run: Option<Run>, cx: &mut Context<Self>) {
@@ -397,8 +360,7 @@ impl Board {
     /// Lets go of the map, closed for a while; the user's state of it was saved when it closed.
     pub fn forget(&mut self) {
         (self.id, self.locale, self.map, self.icons, self.selected, self.mark) = (None, None, Load::Pending, None, None, None);
-        (self.settled, self.saved, self.counts, self.found_counts, self.haystacks) =
-            (false, Rc::default(), Vec::new(), Vec::new(), Vec::new());
+        (self.settled, self.saved, self.tally, self.haystacks) = (false, Rc::default(), Vec::new(), Vec::new());
     }
 
     pub fn set_open(&mut self, open: bool, cx: &mut Context<Self>) {

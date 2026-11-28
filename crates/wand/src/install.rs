@@ -5,6 +5,7 @@ use std::{
     cmp::Reverse,
     env, fs,
     path::{Path, PathBuf},
+    sync::LazyLock,
     time::SystemTime,
 };
 
@@ -49,6 +50,12 @@ impl Install {
             false => self.version.iter().map(u32::to_string).collect::<Vec<_>>().join("."),
         }
     }
+}
+
+pub fn user_agent() -> &'static str {
+    static AGENT: LazyLock<String> =
+        LazyLock::new(|| installs().first().map_or_else(|| "Wand".to_owned(), |install| format!("Wand/{}", install.label())));
+    &AGENT
 }
 
 /// Every installed version of every brand, newest first.

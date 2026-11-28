@@ -25,9 +25,10 @@ pub const POLISH: Language = Language { tag: "pl", name: "POLSKI" };
 pub const TURKISH: Language = Language { tag: "tr", name: "TÜRKÇE" };
 pub const RUSSIAN: Language = Language { tag: "ru", name: "РУССКИЙ" };
 pub const UKRAINIAN: Language = Language { tag: "uk", name: "УКРАЇНСЬКА" };
+pub const THAI: Language = Language { tag: "th", name: "ไทย" };
 
 pub const LANGUAGES: &[Language] =
-    &[ENGLISH, CHINESE, CHINESE_TRADITIONAL, FRENCH, GERMAN, SPANISH, ITALIAN, PORTUGUESE, POLISH, TURKISH, RUSSIAN, UKRAINIAN];
+    &[ENGLISH, CHINESE, CHINESE_TRADITIONAL, FRENCH, GERMAN, SPANISH, ITALIAN, PORTUGUESE, POLISH, TURKISH, RUSSIAN, UKRAINIAN, THAI];
 
 impl Language {
     /// Written in Cyrillic: the UI's Latin font has no letters for it.

@@ -1,9 +1,13 @@
 //! Public files over HTTPS: a blocking GET for CDNs (catalog, art, trainer DLLs).
 
-use std::{sync::LazyLock, time::Duration};
+use std::{
+    sync::{LazyLock, OnceLock},
+    time::Duration,
+};
 
 use anyhow::{Context, Result, bail, ensure};
-use ureq::Agent;
+use ureq::{Agent, RequestBuilder, config::AutoHeaderValue, typestate::WithoutBody};
+use url::Url;
 
 mod guarded;
 
@@ -13,9 +17,11 @@ pub use guarded::{Refused, guarded};
 static AGENT: LazyLock<Agent> = LazyLock::new(|| {
     Agent::config_builder()
         .http_status_as_error(false)
-        .user_agent("Impulse")
-        // Covers connecting and reading the body: a server that stalls must not hold a worker, or a run, forever.
-        .timeout_global(Some(Duration::from_secs(120)))
+        .user_agent(USER_AGENT)
+        // A server that stalls must not hold a worker, or a run, forever; a slow one that keeps sending is waited for.
+        .timeout_resolve(Some(STALL))
+        .timeout_connect(Some(STALL))
+        .timeout_per_read(Some(STALL))
         // Map tiles load 12 at a time; a reopened connection costs a TLS handshake.
         .max_idle_connections(16)
         .max_idle_connections_per_host(12)
@@ -24,7 +30,12 @@ static AGENT: LazyLock<Agent> = LazyLock::new(|| {
         .into()
 });
 
+// A domain and the User-Agent its requests carry instead (`name_as`).
+static NAMED: OnceLock<(String, String)> = OnceLock::new();
+
+const USER_AGENT: &str = concat!("Impulse/", env!("CARGO_PKG_VERSION"));
 const MAX_BODY: u64 = 64 << 20;
+const STALL: Duration = Duration::from_secs(30);
 
 pub struct Response {
     pub status: u16,
@@ -46,12 +57,42 @@ pub(crate) fn edge_of(status: u16, headers: &ureq::http::HeaderMap) -> String {
     ["server", "cf-ray", "cf-cache-status"].into_iter().filter_map(named).collect::<Vec<_>>().join(", ")
 }
 
+/// From now on [`get`] and [`range`] of `domain` or a host under it send `agent` as their User-Agent; the first call
+/// holds.
+pub fn name_as(domain: &str, agent: &str) {
+    let _ = NAMED.set((domain.to_ascii_lowercase(), agent.to_owned()));
+}
+
+/// A GET of `url`, its User-Agent as [`name_as`] gave its host.
+fn ask(url: &str) -> RequestBuilder<WithoutBody> {
+    let request = AGENT.get(url);
+    let host = Url::parse(url).ok().and_then(|url| url.host_str().map(str::to_owned));
+    match (NAMED.get(), host) {
+        (Some((domain, agent)), Some(host)) if under(&host, domain) => request.header("User-Agent", agent),
+        _ => request,
+    }
+}
+
+fn under(host: &str, domain: &str) -> bool {
+    host.strip_suffix(domain).is_some_and(|rest| rest.is_empty() || rest.ends_with('.'))
+}
+
 /// Blocking GET; `etag` makes it conditional (304 has an empty body).
 pub fn get(url: &str, etag: Option<&str>) -> Result<Response> {
-    let mut request = AGENT.get(url);
+    let mut request = ask(url);
     if let Some(tag) = etag {
         request = request.header("If-None-Match", format!("\"{tag}\""));
     }
+    answer(url, request)
+}
+
+/// [`get`] with no header of its own: no User-Agent, Accept or Accept-Encoding.
+pub fn get_bare(url: &str) -> Result<Response> {
+    let none = || AutoHeaderValue::None;
+    answer(url, AGENT.get(url).config().user_agent(none()).accept(none()).accept_encoding(none()).build())
+}
+
+fn answer(url: &str, request: RequestBuilder<WithoutBody>) -> Result<Response> {
     let mut response = request.call().with_context(|| format!("GET {url}"))?;
     let etag = etag_of(response.headers());
     let status = response.status().as_u16();
@@ -72,7 +113,7 @@ pub fn range(url: &str, from: u64, len: u64) -> Result<Response> {
     ensure!(len > 0 && len <= MAX_BODY, "GET {url}: a range of {len} bytes");
     let last = from.checked_add(len - 1).with_context(|| format!("GET {url}: a range past the end"))?;
     // Offsets count the stored bytes: an encoded answer would shift them.
-    let request = AGENT.get(url).config().max_redirects(0).build();
+    let request = ask(url).config().max_redirects(0).build();
     let request = request.header("Range", format!("bytes={from}-{last}")).header("Accept-Encoding", "identity");
     let mut response = request.call().with_context(|| format!("GET {url}"))?;
     let (status, headers) = (response.status().as_u16(), response.headers());
@@ -121,6 +162,26 @@ mod tests {
         let response = get(&url, Some("x")).unwrap();
         server.join().unwrap();
         assert_eq!((response.status, response.etag.as_deref(), response.body.len()), (304, Some("x"), 0));
+    }
+
+    #[test]
+    fn a_named_domain_is_asked_as_its_agent_and_a_bare_get_as_none() {
+        const OK: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok";
+        name_as("127.0.0.1", "Named/1");
+        let (url, server) = serve(OK);
+        get(&url, None).unwrap();
+        assert!(server.join().unwrap().contains("user-agent: named/1"));
+
+        let (url, server) = serve(OK);
+        assert_eq!(get_bare(&url).unwrap().body, b"ok");
+        let asked = server.join().unwrap();
+        assert!(["user-agent", "accept"].iter().all(|name| !asked.contains(name)), "{asked}");
+    }
+
+    #[test]
+    fn a_host_is_under_its_domain_and_its_subdomains_only() {
+        assert!(under("wemod.com", "wemod.com") && under("storage-cdn.wemod.com", "wemod.com"));
+        assert!(!under("notwemod.com", "wemod.com") && !under("wemod.com.evil.io", "wemod.com"));
     }
 
     /// Serves one request with `answer`, giving back what was asked.

@@ -9,10 +9,11 @@ use std::{
     sync::Arc,
 };
 
-pub use disk::{Stored, VERSION, read, write};
-use model::SourceId;
+pub use disk::{Stored, VERSION, read};
+use model::{Ref, SourceId};
 
 pub use keys::{by_ref, name};
+pub(crate) use keys::{hex, random_hex};
 pub use migrate::migrate;
 
 /// The data folder: the only place that names the app's own files and folders.
@@ -42,7 +43,11 @@ entries! {
     remote_devices: "remote.json",
     map_links: "map-links.json",
     trainer_links: "trainer-links.json",
+    // Older builds' state per map, taken over by `map::state` into `map_data`.
     map_state: "map-state",
+    map_data: "map-data",
+    // The user's pins' pictures and clips, of every map (`map::media`).
+    map_media: "map-media",
     pictures: "art",
     tiles: "tiles",
     videos: "videos",
@@ -56,6 +61,37 @@ entries! {
 impl Paths {
     pub fn new(root: PathBuf) -> Self {
         Self(root.into())
+    }
+
+    /// Map `map`'s folder of the user's state, under `map_data`.
+    pub fn map_files(&self, map: &Ref) -> MapFiles {
+        MapFiles(self.map_data().join(name(map.source().as_str())).join(name(map.id())))
+    }
+}
+
+/// A map's folder: `view.json`, `progress.json`, `presets/<id>.json`.
+pub struct MapFiles(PathBuf);
+
+impl MapFiles {
+    pub fn dir(&self) -> &Path {
+        &self.0
+    }
+
+    /// Its sibling, where the folder is made before it takes the name.
+    pub fn staged(&self) -> Self {
+        Self(self.0.with_extension("staged"))
+    }
+
+    pub fn view(&self) -> PathBuf {
+        self.0.join("view.json")
+    }
+
+    pub fn progress(&self) -> PathBuf {
+        self.0.join("progress.json")
+    }
+
+    pub fn preset(&self, id: &str) -> PathBuf {
+        self.0.join("presets").join(format!("{}.json", name(id)))
     }
 }
 

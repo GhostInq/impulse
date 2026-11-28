@@ -1,7 +1,7 @@
 //! What floats over the map and moves with it: the hovered pin's chip, the right click menu,
 //! the buttons and layers, the player's readout.
 
-use client::map::state::Saved;
+use client::map::state::View;
 use gpui_kit::{
     AnyElement, App, Context, Div, FontWeight, IntoElement, SharedString, Stateful, Window,
     component::{h_flex, v_flex},
@@ -62,7 +62,7 @@ impl Stage {
             .when(!about.is_empty(), |text| {
                 text.child(div().pt(px(3.)).line_clamp(2).text_size(px(TYPE_SMALL)).text_color(rgb(TEXT_2)).child(about))
             })
-            .when(board.saved.found.contains(&pin.id), |text| {
+            .when(board.saved.found(&pin.id), |text| {
                 let accent = rgb(accent(cx));
                 text.child(
                     h_flex()
@@ -74,7 +74,12 @@ impl Stage {
             });
         let preview = pin.image.as_ref().map(|image| {
             let under = stand_in(pin.group, map, board, &mut self.images, window, cx);
-            picture(index, under, [fill(img(image.preview.clone()), ("pin-media", index))], (CHIP_WIDTH - 2., CHIP_PICTURE))
+            picture(
+                ("pin-pictures", index),
+                under,
+                [fill(img(image.preview.clone()), ("pin-media", index))],
+                (CHIP_WIDTH - 2., CHIP_PICTURE),
+            )
         });
         let chip = v_flex()
             .absolute()
@@ -102,9 +107,11 @@ impl Stage {
                 },
             ))
         });
-        let add = button(&t(cx, key::MAP_ADD_PIN))
-            .id("map-add-mark")
-            .on_click(cx.listener(move |stage, _, _, cx| stage.board.update(cx, |board, cx| board.add_mark(target, None, cx))));
+        let add = button(&t(cx, key::MAP_ADD_PIN)).id("map-add-mark").on_click(cx.listener(move |stage, _, _, cx| {
+            stage.board.update(cx, |board, cx| {
+                board.add_mark(target, None, cx);
+            })
+        }));
         let menu = v_flex().occlude().absolute().left(px(x as f32)).top(px(y as f32)).gap(px(4.)).child(add).children(teleport);
         Some(menu.into_any_element())
     }
@@ -140,7 +147,7 @@ impl Stage {
             .bottom(px(MARGIN))
             .items_end()
             .gap(px(8.))
-            .when(self.layers_open, |row| row.child(layers_menu(map, &board.saved, cx)))
+            .when(self.layers_open, |row| row.child(layers_menu(map, board, cx)))
             .child(v_flex().gap(px(8.)).children(locate).child(v_flex().child(zoom_in).child(zoom_out.border_t_0())).child(layers))
     }
 
@@ -170,9 +177,10 @@ impl Stage {
     }
 }
 
-/// The map's tile sets, when it has more than one, then its layers.
-fn layers_menu(map: &Map, saved: &Saved, cx: &Context<Stage>) -> impl IntoElement {
-    let accent = accent(cx);
+/// The map's tile sets, when it has more than one, then its layers: grouping on the minimap for a map it shows, the
+/// rises while the player's height is told.
+fn layers_menu(map: &Map, board: &Board, cx: &Context<Stage>) -> impl IntoElement {
+    let (accent, view) = (accent(cx), board.saved.view());
     let option = |id: (&'static str, usize), label: SharedString, on: bool| {
         list_row(id, false)
             .h(px(28.))
@@ -181,17 +189,17 @@ fn layers_menu(map: &Map, saved: &Saved, cx: &Context<Stage>) -> impl IntoElemen
             .child(square(11., alpha(accent, if on { 1. } else { 0. })).border_1().border_color(if on { rgb(accent) } else { line(0.3) }))
             .child(mono(label, TYPE_CAPTION).font_weight(FontWeight::BOLD).text_color(rgb(if on { TEXT } else { DIM })))
     };
-    let layer = |slot: usize, label: SharedString, on: bool, flip: fn(&mut Saved)| {
+    let layer = |slot: usize, label: SharedString, on: bool, flip: fn(&mut View)| {
         option(("map-layer", slot), label, on)
             .on_click(cx.listener(move |stage, _, _, cx| stage.board.update(cx, |board, cx| board.filter(flip, cx))))
     };
-    let chosen = saved.tile_set_of(map).0;
+    let chosen = view.tile_set_of(map).0;
     let sets = map.tile_sets.iter().enumerate().map(|(index, set)| {
         let id = set.id.clone();
         option(("map-tiles", index), text(cx, &set.name).to_uppercase().into(), index == chosen).on_click(cx.listener(
             move |stage, _, _, cx| {
                 let id = id.clone();
-                stage.board.update(cx, |board, cx| board.filter(|saved| saved.tile_set = Some(id), cx));
+                stage.board.update(cx, |board, cx| board.filter(|view| view.tile_set = Some(id), cx));
             },
         ))
     });
@@ -204,11 +212,17 @@ fn layers_menu(map: &Map, saved: &Saved, cx: &Context<Stage>) -> impl IntoElemen
         .when(map.tile_sets.len() > 1, |menu| {
             menu.child(v_flex().pb(px(4.)).mb(px(4.)).border_b_1().border_color(line(0.16)).children(sets))
         })
-        .when(!map.labels.is_empty(), |menu| menu.child(layer(0, t(cx, key::MAP_LAYER_LABELS), saved.labels, |saved| saved.labels ^= true)))
+        .when(!map.labels.is_empty(), |menu| menu.child(layer(0, t(cx, key::MAP_LAYER_LABELS), view.labels, |view| view.labels ^= true)))
         .when(!map.regions.is_empty(), |menu| {
-            menu.child(layer(1, t(cx, key::MAP_LAYER_REGIONS), saved.regions, |saved| saved.regions ^= true))
+            menu.child(layer(1, t(cx, key::MAP_LAYER_REGIONS), view.regions, |view| view.regions ^= true))
         })
-        .child(layer(2, t(cx, key::MAP_LAYER_CLUSTERS), saved.clusters, |saved| saved.clusters ^= true))
+        .child(layer(2, t(cx, key::MAP_LAYER_CLUSTERS), view.clusters, |view| view.clusters ^= true))
+        .when(view.clusters && map.frame.is_some(), |menu| {
+            // Under its square: a choice within the one above.
+            let mini = layer(3, t(cx, key::MAP_LAYER_MINI_CLUSTERS), view.mini_clusters, |view| view.mini_clusters ^= true);
+            menu.child(mini.pl(px(31.)))
+        })
+        .when(board.here, |menu| menu.child(layer(4, t(cx, key::MAP_LAYER_RISES), view.rises, |view| view.rises ^= true)))
 }
 
 /// A square map button; `on` lights it in the accent.

@@ -28,6 +28,8 @@ use crate::{
     ui::text::{Texts, content_locale},
 };
 
+mod pin_here;
+
 // A closed map keeps its pins this long, so opening it again soon is instant; later they are read from disk again.
 // While a trainer is live in its game, it keeps them until the run ends.
 const KEPT_CLOSED: Duration = Duration::from_secs(3 * 60);
@@ -102,8 +104,8 @@ impl Maps {
         })
         .detach();
         let art = Media::Pictures.dir(paths);
-        let board = cx.new(|_| Board::new(paths.map_state(), art.clone()));
-        let live_board = cx.new(|_| Board::live(paths.map_state(), art));
+        let board = cx.new(|_| Board::new(paths.clone(), art.clone()));
+        let live_board = cx.new(|_| Board::live(paths.clone(), art));
         let live_map = cx.new(|cx| LiveMap::new(registry.clone(), live_board, board.clone(), Media::Tiles.dir(paths), paths, cx));
         Self {
             registry,
@@ -382,7 +384,7 @@ impl Maps {
     fn keep_view(&mut self, cx: &mut Context<Self>) {
         let Some(camera) = &self.camera else { return };
         let view = camera(cx);
-        self.board.update(cx, |board, _| board.saved_mut().view = view);
+        self.board.update(cx, |board, _| board.keep_camera(view));
     }
 
     /// The minimap follows the live run while its dock is shown.
@@ -432,6 +434,10 @@ impl Maps {
         self._forget = cx.spawn(async move |maps, cx| {
             cx.background_executor().timer(KEPT_CLOSED).await;
             maps.update(cx, |maps, cx| {
+                // Opened or gone live meanwhile (PIN HERE may have chosen the map): kept.
+                if maps.is_open(cx) || maps.live.is_some() && maps.live == maps.game {
+                    return;
+                }
                 // A load on its way would install into the map let go of.
                 maps._load = Task::ready(());
                 maps.board.update(cx, |board, _| board.forget());

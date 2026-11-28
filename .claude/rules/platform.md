@@ -1,6 +1,6 @@
 ---
 paths:
-  - "crates/{keyhook,topmost,tray,video,sound,journal,disk,fetch,pe,updater}/**"
+  - "crates/{keyhook,topmost,tray,video,sound,capture,journal,disk,fetch,pe,updater}/**"
 ---
 
 # Platform leaves
@@ -33,17 +33,21 @@ Small Windows and I/O crates with no dependency on our other crates but `model` 
 - `Cue` (toggle on and off, slider, number, button, selection; serde, so `shell` saves it by name), `play(cue, file)` and `is_clip(file)`: async `PlaySoundW` of WAVs generated in memory once (no files ship: `synth` makes struck notes, a pair a fourth apart with a soft click and an exponential decay, the off sound a fourth below the on), or of the user's `file` when winmm takes it.
 - One sound at a time: a new cue replaces the one playing. `play` never waits for the sound and may be called from any thread; a `file` is opened inside the call (winmm answers `FALSE` for a missing one: the built-in tone plays), so only local files are expected. `is_clip` (RIFF/WAVE with a format and a nonempty data chunk, 1 MiB, a path of 255 units) reads the file: call it off the UI thread.
 
+## capture
+- `window(hwnd, within) -> Shot`: one frame of a window through Windows.Graphics.Capture, BGRA rows tight and top-down, the cursor and the capture border left out where Windows lets it. Blocking: run it off the UI thread. Its own D3D11 device and an MTA it balances; a minimized window is an error, no frame `within` too.
+- A window capture holds only that window: a topmost window over it is not in it, a layer drawn into its frame is.
+
 ## journal
 - `init` first in `main`, before anything logs. `since`, `subscribe`, `closing` (call when the last window closes), `dir`.
 - `OURS` lists the workspace crates (Debug up; others Warn up). A test fails when a crate is missing: add a new crate there.
 - Messages are flattened to one line and the profile path is scrubbed.
 
 ## disk
-- `replace(path, data)`: how every app file is written (temp file, rename). `size(path)`: a file's or folder's bytes, blocking.
-- `Stored<T>`: a typed JSON file (`client`'s and `plugins`' alike; `client::storage` re-exports it): missing means the defaults, not JSON moves aside, an object carries `VERSION` and one of another version is never written. `edit` logs a failed save and keeps the change; `try_edit` (`T: Clone`) saves a copy first, publishes it only when saved, and errors on a store that does not save. `read`, `write` for files kept by hand.
+- `replace(path, data)`: how every app file is written (temp file, rename); `stage(dir)` for one written as a stream or named only once written (`Staged`: `publish`, removed if dropped or not published). `size(path)`: a file's or folder's bytes, blocking.
+- `Stored<T>`: a typed JSON file (`client`'s and `plugins`' alike; `client::storage` re-exports it): missing means the defaults, not JSON moves aside, an object carries `VERSION` and one of another version is never written. `edit` logs a failed save and keeps the change; `get_mut` changes it now and `flush` saves it if changed; `try_edit` (`T: Clone`) saves a copy first, publishes it only when saved, and errors on a store that does not save. The default has no file and never saves. `read` for a file kept by hand.
 
 ## fetch
-- `get(url, etag)`: blocking GET for public CDNs only (they send no CORS headers). The WeMod API goes through `wand`'s bridge. Body capped at 64 MiB and left unread on a 304 (it sends none, and GitHub's names an encoding the decoder would fail on) or a 4xx or 5xx (their `edge`: `server`, `cf-ray` and `cf-cache-status`, names who answered), 120 s timeout. Run it off the UI thread.
+- `get(url, etag)`: blocking GET for public CDNs only (they send no CORS headers). The WeMod API goes through `wand`'s bridge. Body capped at 64 MiB and left unread on a 304 (it sends none, and GitHub's names an encoding the decoder would fail on) or a 4xx or 5xx (their `edge`: `server`, `cf-ray` and `cf-cache-status`, names who answered). It fails on a 30 s stall (resolving, connecting, or no byte read), never on the whole time: a slow link that keeps sending is waited for. Run it off the UI thread. Its User-Agent is `USER_AGENT` (`Impulse/<version>`), as `guarded`'s, but for a domain `name_as(domain, agent)` named (it and its subdomains; the first call holds), in `range` too. `get_bare(url)`: the same with no header of its own.
 - `range(url, from, len)`: the stored bytes (no encoding) as a 206 of exactly that range (shorter only at the file's end), with its ETag; a 200 (the range ignored) or another range is an error, a redirect is not followed and comes back with any other status, without a body.
 - `guarded(url, allowed, limit, timeout)` for plugins: https only, every hop (5 redirects at most, followed by hand) must pass `allowed(host)`, public addresses only (the resolver drops the rest; IPv6 is global unicast, mapped and NAT64 follow their IPv4), no proxy, no headers but the user agent. An out-of-scope URL, hop or host, or a body past `limit`, is an error carrying `Refused` (`downcast_ref`).
 

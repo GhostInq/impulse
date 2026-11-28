@@ -11,6 +11,7 @@ mod in_game;
 mod inside;
 mod keys;
 mod settings;
+mod shot;
 mod warning;
 
 use std::{iter, pin::pin, sync::Arc, time::Duration};

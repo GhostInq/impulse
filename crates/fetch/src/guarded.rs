@@ -18,7 +18,7 @@ use ureq::{
 };
 use url::Url;
 
-use crate::{Response, edge_of, etag_of};
+use crate::{Response, USER_AGENT, edge_of, etag_of};
 
 const MAX_REDIRECTS: usize = 5;
 
@@ -62,7 +62,7 @@ static AGENT: LazyLock<Agent> = LazyLock::new(|| {
         // A proxy would make the resolver check the proxy's address instead of the origin's.
         .proxy(None)
         .max_redirects(0)
-        .user_agent(concat!("Impulse/", env!("CARGO_PKG_VERSION")))
+        .user_agent(USER_AGENT)
         .build();
     Agent::with_parts(config, DefaultConnector::default(), PublicOnly::default())
 });

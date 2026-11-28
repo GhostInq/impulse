@@ -86,10 +86,22 @@ fn no_deltas_no_frame_and_no_teleport() {
 }
 
 #[test]
-fn swapped_axes_reach_the_frame_and_the_pin_position() {
+fn swapped_axes_reach_the_frame_and_the_pin_keeps_the_games_order() {
     let map = parse(&response(xyz(), deltas(json!({"x": "y", "y": "x", "z": "z"})))).unwrap().0;
     assert_eq!(map.frame.unwrap().axes, [1, 0, 2]);
-    assert_eq!(map.pins[0].position, Some([2., 1., 3.]));
+    assert_eq!(map.pins[0].position, Some([1., 2., 3.]));
+}
+
+#[test]
+fn up_is_the_axis_the_plane_leaves_whatever_z_names() {
+    // Castor Woods: `z` names the plane's y axis again; its reference point lands with y up.
+    let located = json!({"deltas": {"scaleX": 0.00011179562954028567, "scaleY": 0.00011208634994290028,
+        "offsetX": 236.06631381320608, "offsetY": 241.17866687476067, "gameCoordsMap": {"x": "z", "y": "x", "z": "x"}}});
+    let frame = parse(&response(xyz(), located)).unwrap().0.frame.unwrap();
+    assert_eq!(frame.axes, [2, 0, 1]);
+    let at = frame.to_map([865.3792724609375, 16.39686393737793, -620.7015380859375]);
+    let want = point(&[-68.9212846367867, 44.70478244273227]).unwrap();
+    assert!((at.x - want.x).abs() < 1e-6 && (at.y - want.y).abs() < 1e-6, "{at:?} {want:?}");
 }
 
 #[test]

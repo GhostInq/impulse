@@ -1,7 +1,7 @@
 //! The selected pin's card: its picture or clip, what it is, where, and the pins near it.
 
 use gpui_kit::{
-    AnyElement, ClipboardItem, Context, Div, FontWeight, Stateful, Window,
+    AnyElement, ClipboardItem, Context, Div, FontWeight, SharedString, Stateful, Window,
     component::{h_flex, text::TextView, v_flex},
     div, img,
     prelude::*,
@@ -10,7 +10,7 @@ use gpui_kit::{
 use i18n::Arg;
 use model::{Map, PIN_LINK};
 
-use super::{Card, PICTURE};
+use super::{Card, PICTURE, found_button};
 use crate::{
     Load,
     map::{
@@ -25,7 +25,7 @@ use crate::{
         key,
         text::{t, tf},
         theme::*,
-        widgets::{button, flash, icon, icon_button, list_row, mono},
+        widgets::{button, flash, icon_button, list_row, mono},
     },
 };
 
@@ -37,7 +37,7 @@ pub(super) fn nearest(board: &Board) -> Vec<usize> {
     let (Load::Ready(map), Some(index)) = (&board.map, board.selected) else { return Vec::new() };
     let at = map.pins[index].at;
     let mut near: Vec<(f64, usize)> = Vec::with_capacity(NEARBY + 1);
-    for (other, pin) in map.pins.iter().enumerate().filter(|&(other, _)| other != index) {
+    for (other, pin) in map.pins.iter().enumerate().filter(|&(other, pin)| other != index && !board.saved.hidden(&pin.id)) {
         let distance = (pin.at.x - at.x).powi(2) + (pin.at.y - at.y).powi(2);
         if near.len() < NEARBY || distance < near[NEARBY - 1].0 {
             near.insert(near.partition_point(|&(closer, _)| closer <= distance), (distance, other));
@@ -77,7 +77,7 @@ impl Card {
         let index = board.selected?;
         let pin = &map.pins[index];
         let category = &map.categories[pin.group.0];
-        let found = board.saved.found.contains(&pin.id);
+        let found = board.saved.found(&pin.id);
         let teleport = pin.position.filter(|_| board.can_teleport(map));
         let accent = rgb(accent(cx));
         let badge = h_flex()
@@ -100,7 +100,7 @@ impl Card {
                 .flex_none()
                 .cursor_pointer()
                 .bg(rgb(SUNKEN))
-                .child(picture(index, under, preview.into_iter().chain(clip), (CARD_WIDTH - 2., PICTURE)))
+                .child(picture(("pin-pictures", index), under, preview.into_iter().chain(clip), (CARD_WIDTH - 2., PICTURE)))
                 .on_click(cx.listener(|card, _, _, cx| {
                     (card.lightbox, card.photo) = (true, false);
                     cx.notify();
@@ -121,10 +121,7 @@ impl Card {
             None => head.pt(px(14.)).pr(px(36.)),
         };
         let coordinates = pin.position.map(|position| self.coordinates(position, cx).mx(px(14.)));
-        let mark = button(&t(cx, if found { key::MAP_FOUND } else { key::MAP_MARK_FOUND }))
-            .id("pin-found")
-            .flex_1()
-            .when(found, |button| button.border_color(accent).text_color(accent).child(icon(Icon::Check, 11., accent)))
+        let mark = found_button("pin-found", found, cx)
             .on_click(cx.listener(move |card, _, _, cx| card.board.update(cx, |board, cx| board.toggle_found(index, cx))));
         let go = teleport.map(|to| {
             button(&t(cx, if self.confirm { key::MAP_CONFIRM } else { key::MAP_TELEPORT }))
@@ -151,25 +148,25 @@ impl Card {
                 text
             }
         };
-        let hide = h_flex()
-            .id("pin-hide-group")
-            .px(px(14.))
-            .pb(px(12.))
-            .gap(px(6.))
-            .cursor_pointer()
-            .text_color(rgb(FAINT))
-            .hover(|style| style.text_color(rgb(MUTED)))
-            .child(mono(hide_text, TYPE_TAG))
-            .on_click(cx.listener(move |card, _, _, cx| {
-                card.board.update(cx, |board, cx| {
-                    board.filter(
-                        |saved| {
-                            saved.hidden.insert(hide_id.clone());
-                        },
-                        cx,
-                    )
-                })
-            }));
+        let hide_group = link("pin-hide-group", hide_text).on_click(cx.listener(move |card, _, _, cx| {
+            card.board.update(cx, |board, cx| {
+                board.filter(
+                    |view| {
+                        view.hidden_groups.insert(hide_id.clone());
+                    },
+                    cx,
+                )
+            })
+        }));
+        // MOVE copies the pin into the user's, which stands in for it; HIDE: its place is gone.
+        let hidden = board.saved.hidden(&pin.id);
+        let copy = (!hidden).then(|| {
+            link("pin-move", t(cx, key::MAP_PIN_MOVE))
+                .on_click(cx.listener(move |card, _, _, cx| card.board.update(cx, |board, cx| board.clone_pin(index, cx))))
+        });
+        let hide = link("pin-hide", t(cx, if hidden { key::MAP_PIN_UNHIDE } else { key::MAP_PIN_HIDE }))
+            .on_click(cx.listener(move |card, _, _, cx| card.board.update(cx, |board, cx| board.toggle_hidden(index, cx))));
+        let foot = v_flex().px(px(14.)).pb(px(12.)).gap(px(8.)).child(h_flex().gap(px(16.)).children(copy).child(hide)).child(hide_group);
         let card = self
             .panel("pin-card")
             .children(shown)
@@ -192,7 +189,7 @@ impl Card {
             })
             .child(h_flex().gap(px(8.)).px(px(14.)).child(mark).children(go))
             .children(self.nearby(map, board, window, cx))
-            .child(hide)
+            .child(foot)
             .child(div().absolute().top(px(6.)).right(px(6.)).child(close));
         Some(card.into_any_element())
     }
@@ -226,10 +223,16 @@ impl Card {
     }
 }
 
+/// A quiet action at the card's foot.
+fn link(id: &'static str, text: SharedString) -> Stateful<Div> {
+    h_flex().id(id).cursor_pointer().text_color(rgb(FAINT)).hover(|style| style.text_color(rgb(MUTED))).child(mono(text, TYPE_TAG))
+}
+
 #[cfg(test)]
 mod tests {
     use std::{path::PathBuf, rc::Rc};
 
+    use client::storage::Paths;
     use model::{Map, Pin, Point, Text, TileSet, Tiles};
 
     use super::*;
@@ -260,7 +263,7 @@ mod tests {
             teleport: false,
             unfinished: false,
         };
-        let mut board = Board::new(PathBuf::new(), PathBuf::new());
+        let mut board = Board::new(Paths::new(PathBuf::new()), PathBuf::new());
         board.map = Load::Ready(Rc::new(map));
         assert!(nearest(&board).is_empty());
         board.selected = Some(0);

@@ -10,7 +10,7 @@ use std::{
 use gpui_kit::{App, Global, SharedString};
 use i18n::{
     Arg, CHINESE, CHINESE_TRADITIONAL, Catalog, ENGLISH, FRENCH, GERMAN, ITALIAN, Key, Language, POLISH, PORTUGUESE, RUSSIAN, SPANISH,
-    TURKISH, UKRAINIAN,
+    THAI, TURKISH, UKRAINIAN,
 };
 use model::{Failure, FailureKind, Files, Locale, SourceId, Text};
 use rustc_hash::{FxHashMap, FxHasher};
@@ -32,6 +32,7 @@ static FILES: LazyLock<Files> = LazyLock::new(|| {
         (TURKISH, include_str!("../../locales/tr.ftl")),
         (RUSSIAN, include_str!("../../locales/ru.ftl")),
         (UKRAINIAN, include_str!("../../locales/uk.ftl")),
+        (THAI, include_str!("../../locales/th.ftl")),
     ]
     .iter()
     .map(|&(language, source)| (language.tag.into(), source.into()))
@@ -231,7 +232,7 @@ fn kind(kind: FailureKind) -> Key {
 #[cfg(test)]
 mod tests {
     use i18n::{
-        Arg, CHINESE, CHINESE_TRADITIONAL, ENGLISH, FRENCH, GERMAN, ITALIAN, POLISH, PORTUGUESE, RUSSIAN, SPANISH, TURKISH, UKRAINIAN,
+        Arg, CHINESE, CHINESE_TRADITIONAL, ENGLISH, FRENCH, GERMAN, ITALIAN, POLISH, PORTUGUESE, RUSSIAN, SPANISH, THAI, TURKISH, UKRAINIAN,
     };
 
     use super::{Texts, key};
@@ -250,6 +251,7 @@ mod tests {
         assert_eq!(Texts::new(TURKISH, &[]).digits("3,645 1.5"), "3.645 1,5");
         assert_eq!(Texts::new(RUSSIAN, &[]).digits("3,645 1.5"), "3\u{a0}645 1,5");
         assert_eq!(Texts::new(UKRAINIAN, &[]).digits("3,645 1.5"), "3\u{a0}645 1,5");
+        assert_eq!(Texts::new(THAI, &[]).digits("3,645 1.5"), "3,645 1.5");
     }
 
     #[test]

@@ -15,12 +15,14 @@ pub const VERSION: u64 = 2;
 
 /// A typed JSON file, read once and written whole on every edit. Missing means the defaults; not JSON is
 /// moved to `<name>.damaged.json`, then the defaults. A file this build cannot read gives the defaults and is
-/// never written: an older one waits for `migrate`, a newer one for its build.
-#[derive(Clone)]
+/// never written: an older one waits for `migrate`, a newer one for its build. The default has no file: memory only.
+#[derive(Clone, Default)]
 pub struct Stored<T> {
     file: PathBuf,
     value: T,
     saves: bool,
+    // Changed through `get_mut` since the last save.
+    dirty: bool,
 }
 
 impl<T: Serialize + DeserializeOwned + Default> Stored<T> {
@@ -48,18 +50,31 @@ impl<T: Serialize + DeserializeOwned + Default> Stored<T> {
                 (T::default(), false)
             }
         };
-        Self { file, value, saves }
+        Self { file, value, saves, dirty: false }
     }
 
     /// Changes the value and saves it. A failed save is logged and the change holds until the app closes.
     pub fn edit<R>(&mut self, change: impl FnOnce(&mut T) -> R) -> R {
-        let changed = change(&mut self.value);
-        if self.saves
-            && let Err(e) = self.save(&self.value)
-        {
-            log::warn!("{} not saved: {e:#}", self.file.display());
-        }
+        let changed = change(self.get_mut());
+        self.flush();
         changed
+    }
+
+    /// The value to change now and save at the next `flush`.
+    pub fn get_mut(&mut self) -> &mut T {
+        self.dirty = true;
+        &mut self.value
+    }
+
+    /// Saves what changed since the last save, if anything; a failure is logged and the next flush tries again.
+    pub fn flush(&mut self) {
+        if !self.dirty || !self.saves {
+            return;
+        }
+        match self.save(&self.value) {
+            Ok(()) => self.dirty = false,
+            Err(e) => log::warn!("{} not saved: {e:#}", self.file.display()),
+        }
     }
 
     /// Changes a copy and saves it; the value changes only when the save worked. A file this build does not save is an error.
@@ -103,13 +118,6 @@ impl<T> Deref for Stored<T> {
 /// `None` for a missing or damaged file.
 pub fn read<T: DeserializeOwned>(file: &Path) -> Option<T> {
     serde_json::from_slice(&fs::read(file).ok()?).ok()
-}
-
-/// A failed save is logged: the change holds until the app closes.
-pub fn write<T: Serialize>(file: &Path, value: &T) {
-    if let Err(e) = keep(file, value) {
-        log::warn!("{} not saved: {e:#}", file.display());
-    }
 }
 
 fn keep<T: Serialize>(file: &Path, value: &T) -> Result<()> {
@@ -165,6 +173,34 @@ mod tests {
         assert!(refused.try_edit(|note| note.text = "new".into()).is_err());
         assert_eq!(refused.text, "");
         assert_eq!(fs::read_to_string(later).unwrap(), r#"{"version":3,"text":"later"}"#);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_change_waits_for_flush_and_a_store_without_a_file_writes_nothing() {
+        let dir = dir("flush");
+        let file = dir.join("note.json");
+        let mut note = Stored::<Note>::load(file.clone());
+        note.get_mut().text = "new".into();
+        assert!(!file.exists());
+        note.flush();
+        assert_eq!(Stored::<Note>::load(file.clone()).text, "new");
+        fs::remove_file(&file).unwrap();
+        note.flush();
+        assert!(!file.exists());
+        // A failed save is tried again.
+        let blocked = dir.join("blocked");
+        let mut note = Stored::<Note>::load(blocked.join("note.json"));
+        // A file where its folder goes.
+        fs::write(&blocked, "").unwrap();
+        note.get_mut().text = "new".into();
+        note.flush();
+        fs::remove_file(&blocked).unwrap();
+        note.flush();
+        assert_eq!(Stored::<Note>::load(blocked.join("note.json")).text, "new");
+        let mut memory = Stored::<Note>::default();
+        memory.edit(|note| note.text = "new".into());
+        assert_eq!(memory.text, "new");
         fs::remove_dir_all(dir).unwrap();
     }
 
