@@ -2,7 +2,7 @@
 
 use model::Text;
 
-const FILES: [(&str, &str); 12] = [
+const FILES: [(&str, &str); 13] = [
     ("en", include_str!("../locales/en.ftl")),
     ("zh-CN", include_str!("../locales/zh-CN.ftl")),
     ("zh-TW", include_str!("../locales/zh-TW.ftl")),
@@ -15,6 +15,7 @@ const FILES: [(&str, &str); 12] = [
     ("tr", include_str!("../locales/tr.ftl")),
     ("ru", include_str!("../locales/ru.ftl")),
     ("uk", include_str!("../locales/uk.ftl")),
+    ("th", include_str!("../locales/th.ftl")),
 ];
 
 pub fn files() -> model::Files {

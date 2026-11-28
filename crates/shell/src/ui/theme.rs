@@ -11,6 +11,7 @@ use i18n::{CHINESE_TRADITIONAL, Key, Language};
 
 use super::key;
 
+/// Latin and Thai.
 const UI: &str = "Chakra Petch";
 /// The UI font of Cyrillic languages: Chakra Petch has none, and Exo 2 is the closest in metrics.
 const UI_CYRILLIC: &str = "Exo 2";
@@ -130,7 +131,8 @@ pub fn set_look(cx: &mut App, accent: u32, language: Language) -> bool {
     }
     Theme::global_mut(cx).font_family = ui.into();
     let mut font = gpui_kit::font(ui);
-    font.fallbacks = Some(gpui_kit::FontFallbacks::from_fonts(vec![UI_CJK.to_owned()]));
+    // Thai where the family has none (a mono field) takes Chakra Petch's, han YaHei's.
+    font.fallbacks = Some(gpui_kit::FontFallbacks::from_fonts(vec![UI.to_owned(), UI_CJK.to_owned()]));
     cx.set_global(Look { accent, ui, font });
     true
 }
@@ -175,7 +177,7 @@ pub fn init(cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use i18n::{CHINESE, CHINESE_TRADITIONAL, ENGLISH, RUSSIAN, UKRAINIAN};
+    use i18n::{CHINESE, CHINESE_TRADITIONAL, ENGLISH, RUSSIAN, THAI, UKRAINIAN};
 
     use super::*;
 
@@ -186,5 +188,6 @@ mod tests {
         assert_eq!(ui_family(UKRAINIAN), UI_CYRILLIC);
         assert_eq!(ui_family(CHINESE), UI_CJK);
         assert_eq!(ui_family(CHINESE_TRADITIONAL), UI_CJK_TRADITIONAL);
+        assert_eq!(ui_family(THAI), UI);
     }
 }
